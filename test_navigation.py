@@ -20,6 +20,11 @@ def reading(front_left=INF, front_center=INF, front_right=INF,
     }
 
 
+def front_wall(dist, **kw):
+    """All three front sensors agree on `dist` -- a real wall ahead."""
+    return reading(front_left=dist, front_center=dist, front_right=dist, **kw)
+
+
 def nav():
     return NavigationController(config)
 
@@ -33,8 +38,8 @@ def test_open_space_cruises_forward():
 
 
 def test_close_front_slows_but_keeps_going():
-    cmd = nav().decide(reading(front_center=config.FRONT_SLOW_DISTANCE_CM - 5,
-                               right_front=18, right_rear=18))
+    cmd = nav().decide(front_wall(config.FRONT_SLOW_DISTANCE_CM - 5,
+                                  right_front=18, right_rear=18))
     assert cmd.action is Action.FORWARD
     assert cmd.speed == config.SLOW_SPEED
 
@@ -63,15 +68,34 @@ def test_first_turn_is_left():
 def test_turn_direction_independent_of_right_side():
     # Same first turn (LEFT) whether the right side is walled or wide open --
     # direction comes from the schedule, not the sensors.
-    walled = nav().decide(reading(front_center=15, right_front=16, right_rear=16))
-    opened = nav().decide(reading(front_center=15, right_front=80, right_rear=80))
+    walled = nav().decide(front_wall(15, right_front=16, right_rear=16))
+    opened = nav().decide(front_wall(15, right_front=80, right_rear=80))
     assert walled.action is Action.TURN_LEFT
     assert opened.action is Action.TURN_LEFT
 
 
-def test_any_front_sensor_triggers_stop_distance():
-    # Only the side front sensor sees the wall; nearest-of-three still triggers.
-    cmd = nav().decide(reading(front_left=15, right_front=16, right_rear=16))
+# -- front sensors must agree (one drifting sensor is ignored) --------------
+
+def test_single_drifting_front_sensor_is_ignored():
+    # One sensor reads a close wall, the other two see open space -> no turn.
+    stop = config.FRONT_STOP_DISTANCE_CM
+    cmd = nav().decide(reading(front_left=stop - 10, front_center=200,
+                               front_right=200))
+    assert cmd.action is Action.FORWARD
+
+
+def test_single_dropout_does_not_hide_a_real_wall():
+    # One sensor drops out (inf) but the other two agree on a wall -> still turn.
+    stop = config.FRONT_STOP_DISTANCE_CM
+    cmd = nav().decide(reading(front_left=stop - 10, front_center=stop - 8,
+                               front_right=INF))
+    assert cmd.action is Action.TURN_LEFT
+
+
+def test_two_agreeing_front_sensors_trigger_turn():
+    stop = config.FRONT_STOP_DISTANCE_CM
+    cmd = nav().decide(reading(front_left=stop - 10, front_center=stop - 8,
+                               front_right=200))
     assert cmd.action is Action.TURN_LEFT
 
 
@@ -100,7 +124,7 @@ def test_fully_open_right_cruises():
 def test_serpentine_turns_alternate_left_first():
     n = nav()
     # Each end wall flips the turn direction, starting LEFT: L, R, L, R, ...
-    turns = [n.decide(reading(front_center=15)).action for _ in range(4)]
+    turns = [n.decide(front_wall(15)).action for _ in range(4)]
     assert turns == [Action.TURN_LEFT, Action.TURN_RIGHT,
                      Action.TURN_LEFT, Action.TURN_RIGHT]
 

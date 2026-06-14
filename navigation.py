@@ -11,6 +11,7 @@ Everything else is "cruise forward", with a gentle steering trim that keeps the
 car parallel to and a fixed distance from the right wall.
 """
 
+import statistics
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -84,8 +85,15 @@ class NavigationController:
     # -- internals ----------------------------------------------------------
 
     def _front_distance(self, readings):
-        """Nearest obstacle seen by any of the three forward sensors."""
-        return min(readings.get(name, INF) for name in self.cfg.FRONT_SENSORS)
+        """Distance to a wall ahead, robust to one bad sensor.
+
+        Uses the MEDIAN of the front sensors, so a single sensor that drifts
+        (reads too short, or drops out to 'inf') is ignored -- the car only
+        acts on a wall when at least two of the three front sensors agree.
+        (For 3 sensors, median <= X is exactly "at least two read <= X".)
+        """
+        values = [readings.get(name, INF) for name in self.cfg.FRONT_SENSORS]
+        return statistics.median(values)
 
     def _advance_serpentine(self):
         self._next_serpentine_turn = (
