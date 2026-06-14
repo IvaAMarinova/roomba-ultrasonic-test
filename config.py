@@ -10,7 +10,7 @@ ROBOT_WIDTH_CM = 50.0         # physical width of the car
 # with no gaps this must be <= ROBOT_WIDTH_CM; a little less gives overlap.
 # 210 / 45 ~= 5 lanes. Bigger = wider shift (faster, but leaves unswept strips
 # once it exceeds the car width).
-LANE_WIDTH_CM = 50.0
+LANE_WIDTH_CM = 35.0
 
 # Measured forward travel speed at DRIVE_SPEED, in cm/s. Used to convert the
 # lane-width shift into an open-loop drive time. MEASURE THIS on the real car
