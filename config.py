@@ -22,7 +22,7 @@ SENSORS = {
     "front_left":   {"trig": 23, "echo": 24, "enabled": True},
     "front_center": {"trig": 27,  "echo": 22, "enabled": True},
     "front_right":  {"trig": 6, "echo": 5, "enabled": True},
-    "right_front":  {"trig": 17, "echo": 27, "enabled": False},  # right, toward front
+    "right_front":  {"trig": 17, "echo": 4, "enabled": True},  # right, toward front
     "right_rear":   {"trig": 22, "echo": 25, "enabled": False},  # right, toward rear
 }
 
