@@ -43,8 +43,8 @@ RIGHT_SENSORS = ("right_front", "right_rear")
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 20.0    # wall straight ahead -> end of lane, must turn
-FRONT_SLOW_DISTANCE_CM = 40.0    # start slowing down / preparing to turn
+FRONT_STOP_DISTANCE_CM = 400.0    # wall straight ahead -> end of lane, must turn
+FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
 RIGHT_WALL_DISTANCE_CM = 25.0    # closer than this => a wall is present on the right
 RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall while wall-following
 
@@ -60,7 +60,7 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # ---------------------------------------------------------------------------
 # Motion parameters.
 # ---------------------------------------------------------------------------
-DRIVE_SPEED = 0.6                # nominal forward speed (0..1)
+DRIVE_SPEED = 1                # nominal forward speed (0..1)
 SLOW_SPEED = 0.3                 # forward speed when an obstacle is getting close
 TURN_SPEED = 0.5                 # in-place rotation speed
 STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall
