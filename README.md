@@ -41,6 +41,7 @@ Missing / out-of-range sensors are passed as `float('inf')`.
 ```bash
 python3 test_navigation.py   # unit tests, no hardware needed
 python3 simulate.py          # scripted scenario, prints each decision
+python3 sensor_test.py       # just read & print all sensors (wiring check)
 python3 main.py              # run on the car (mode set by config.USE_SENSORS)
 ```
 
