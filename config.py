@@ -69,7 +69,7 @@ MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
 
 # Seconds to rotate 90 degrees in place at TURN_SPEED. No IMU/encoders: this is
 # just a tuned constant -- measure it on the actual car and adjust.
-TURN_TIME_S = 0.6
+TURN_TIME_S = 13
 
 # ---------------------------------------------------------------------------
 # Motor driver: tank / skid steer, one DIR + one PWM pin per motor (BCM).
