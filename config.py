@@ -20,10 +20,10 @@ LANE_WIDTH_CM = 30.0          # width of one serpentine sweep lane
 # sensors are wired clear of them. Change these to match your actual wiring.
 SENSORS = {
     "front_left":   {"trig": 23, "echo": 24, "enabled": True},
-    "front_center": {"trig": 4,  "echo": 19, "enabled": True},
-    "front_right":  {"trig": 26, "echo": 21, "enabled": True},
-    "right_front":  {"trig": 17, "echo": 27, "enabled": True},  # right, toward front
-    "right_rear":   {"trig": 22, "echo": 25, "enabled": True},  # right, toward rear
+    "front_center": {"trig": 27,  "echo": 22, "enabled": True},
+    "front_right":  {"trig": 6, "echo": 5, "enabled": True},
+    "right_front":  {"trig": 17, "echo": 27, "enabled": False},  # right, toward front
+    "right_rear":   {"trig": 22, "echo": 25, "enabled": False},  # right, toward rear
 }
 
 # Logical groupings used by the navigation logic.
