@@ -46,7 +46,8 @@ class NavigationController:
         self.cfg = cfg
         # "continue route" stub: serpentine sweeps alternate their turn
         # direction at each end wall so the car snakes across the arena.
-        self._next_serpentine_turn = Turn.RIGHT
+        # First turn is LEFT, then it alternates left/right/left/...
+        self._next_serpentine_turn = Turn.LEFT
 
     # -- public API ---------------------------------------------------------
 
@@ -61,15 +62,16 @@ class NavigationController:
         rr = readings.get("right_rear", INF)
 
         front_blocked = front <= cfg.FRONT_STOP_DISTANCE_CM
-        right_wall = min(rf, rr) <= cfg.RIGHT_WALL_DISTANCE_CM
 
         # 1) Wall straight ahead: the lane is finished, rotate in place.
+        #    Turns simply alternate left/right (starting left), which is what
+        #    walks the serpentine across the arena.
         if front_blocked:
-            turn = self._choose_front_turn(right_wall)
+            turn = self._next_serpentine_turn
             self._advance_serpentine()
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
             return Command(action, speed=cfg.TURN_SPEED,
-                           reason="wall ahead: end of lane")
+                           reason=f"wall ahead: end of lane, turn {turn.name.lower()}")
 
         # 2) Otherwise cruise forward, trimming heading against the right wall.
         speed = cfg.DRIVE_SPEED
@@ -84,18 +86,6 @@ class NavigationController:
     def _front_distance(self, readings):
         """Nearest obstacle seen by any of the three forward sensors."""
         return min(readings.get(name, INF) for name in self.cfg.FRONT_SENSORS)
-
-    def _choose_front_turn(self, right_wall):
-        # In a closed rectangle the sweep must alternate its turn direction at
-        # each end wall -- that alternation is what walks the car across the
-        # arena -- so the serpentine schedule is the primary source of truth.
-        scheduled = self._next_serpentine_turn
-        # We only have right-side sensors, so the one case we can positively
-        # veto is "schedule says turn right, but there's a wall on the right"
-        # (the car has reached the far edge of the arena): turn left instead.
-        if scheduled is Turn.RIGHT and right_wall:
-            return Turn.LEFT
-        return scheduled
 
     def _advance_serpentine(self):
         self._next_serpentine_turn = (

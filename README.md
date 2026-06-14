@@ -27,9 +27,9 @@ for is a wall straight ahead — the right side never triggers a turn on its own
 `decide()` reduces the 5 readings to a couple of flags and picks one action:
 
 1. **Wall straight ahead** (nearest of the 3 front sensors ≤ `FRONT_STOP_DISTANCE_CM`)
-   → end of lane, rotate in place. Direction comes from the serpentine schedule
-   (alternates each lane); the only override is "schedule says right but there's
-   a wall on the right" (far edge reached) → **turn left** instead.
+   → end of lane, rotate in place. Direction simply alternates every turn,
+   **starting left**: left, right, left, right, … (independent of the side
+   sensors). This is what marches the serpentine across the arena.
 2. **Otherwise** → cruise forward, with a steering trim that holds the car
    parallel to and `RIGHT_TARGET_DISTANCE_CM` from the right wall. Slows to
    `SLOW_SPEED` inside `FRONT_SLOW_DISTANCE_CM`.

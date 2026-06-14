@@ -41,12 +41,15 @@ SCENARIO = [
     ("wall getting close ahead (should slow)",
      reading(front_center=35, right_front=18, right_rear=18)),
 
-    ("WALL STRAIGHT AHEAD, wall still on right (inside corner -> turn LEFT)",
+    ("WALL STRAIGHT AHEAD (first end-of-lane turn -> LEFT)",
      reading(front_left=18, front_center=15, front_right=19,
              right_front=16, right_rear=16)),
 
     ("cruise along the next lane",
      reading(front_center=150, right_front=18, right_rear=18)),
+
+    ("WALL STRAIGHT AHEAD again (alternates -> RIGHT)",
+     reading(front_center=15, right_front=18, right_rear=18)),
 
     ("right wall drops away (NOT a turn in a bare rectangle -> keep cruising)",
      reading(front_center=150, right_front=120, right_rear=18)),

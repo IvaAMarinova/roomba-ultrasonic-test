@@ -53,17 +53,20 @@ def test_nose_angled_away_trims_right():
 
 # -- trigger 1: wall straight ahead ----------------------------------------
 
-def test_wall_ahead_with_right_wall_turns_left():
-    # Inside corner: blocked ahead and a wall on the right -> turn away (left).
+def test_first_turn_is_left():
+    # The serpentine schedule starts LEFT, regardless of the side readings.
     cmd = nav().decide(reading(front_left=18, front_center=15, front_right=19,
                                right_front=16, right_rear=16))
     assert cmd.action is Action.TURN_LEFT
 
 
-def test_wall_ahead_with_open_right_turns_right():
-    # Blocked ahead but open on the right -> turn into the opening (right).
-    cmd = nav().decide(reading(front_center=15, right_front=80, right_rear=80))
-    assert cmd.action is Action.TURN_RIGHT
+def test_turn_direction_independent_of_right_side():
+    # Same first turn (LEFT) whether the right side is walled or wide open --
+    # direction comes from the schedule, not the sensors.
+    walled = nav().decide(reading(front_center=15, right_front=16, right_rear=16))
+    opened = nav().decide(reading(front_center=15, right_front=80, right_rear=80))
+    assert walled.action is Action.TURN_LEFT
+    assert opened.action is Action.TURN_LEFT
 
 
 def test_any_front_sensor_triggers_stop_distance():
@@ -94,15 +97,12 @@ def test_fully_open_right_cruises():
 
 # -- route stub: serpentine alternation ------------------------------------
 
-def test_serpentine_turn_alternates_with_open_right():
+def test_serpentine_turns_alternate_left_first():
     n = nav()
-    # Right side clear (no wall to veto) -> turn direction follows the schedule
-    # and must alternate at each end wall to walk the sweep across the arena.
-    clear = config.RIGHT_WALL_DISTANCE_CM + 10.0
-    first = n.decide(reading(front_center=15, right_front=clear, right_rear=clear))
-    second = n.decide(reading(front_center=15, right_front=clear, right_rear=clear))
-    assert first.action is not second.action
-    assert {first.action, second.action} == {Action.TURN_LEFT, Action.TURN_RIGHT}
+    # Each end wall flips the turn direction, starting LEFT: L, R, L, R, ...
+    turns = [n.decide(reading(front_center=15)).action for _ in range(4)]
+    assert turns == [Action.TURN_LEFT, Action.TURN_RIGHT,
+                     Action.TURN_LEFT, Action.TURN_RIGHT]
 
 
 def _run():
