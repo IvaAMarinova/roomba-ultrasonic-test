@@ -13,12 +13,14 @@ LANE_WIDTH_CM = 30.0          # width of one serpentine sweep lane
 #   Each entry: logical name -> (TRIG pin, ECHO pin) in BCM numbering.
 #   Adjust the pin numbers to match your wiring.
 # ---------------------------------------------------------------------------
+# NOTE: pins 12, 13, 16, 20 are used by the motors (see MOTORS below), so the
+# sensors are wired clear of them. Change these to match your actual wiring.
 SENSORS = {
-    "front_left":   {"trig": 5,  "echo": 6},
-    "front_center": {"trig": 13, "echo": 19},
+    "front_left":   {"trig": 23,  "echo": 24},
+    "front_center": {"trig": 4,  "echo": 19},
     "front_right":  {"trig": 26, "echo": 21},
-    "right_front":  {"trig": 16, "echo": 20},   # right side, toward the front
-    "right_rear":   {"trig": 12, "echo": 25},   # right side, toward the rear
+    "right_front":  {"trig": 17, "echo": 27},   # right side, toward the front
+    "right_rear":   {"trig": 22, "echo": 25},   # right side, toward the rear
 }
 
 # Logical groupings used by the navigation logic.
@@ -56,20 +58,16 @@ MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
 TURN_TIME_S = 0.6
 
 # ---------------------------------------------------------------------------
-# Motor driver: two H-bridges, tank / skid steer.
-#   Each side has two direction pins (IN1, IN2) in BCM numbering:
-#     forward = (IN1=1, IN2=0), reverse = (IN1=0, IN2=1), stop = (0, 0).
-#   'en' is the H-bridge enable pin:
-#     - set it to a pin number to control speed with PWM, or
-#     - set it to None if the enable line is tied high and you only drive
-#       direction (full-speed on/off). In that mode speed magnitude is treated
-#       as on/off against MOTOR_DEADZONE, so steering still works bang-bang.
+# Motor driver: tank / skid steer, one DIR + one PWM pin per motor (BCM).
+#   'dir' sets direction (a single 1/0 line), 'pwm' sets speed (0..100% duty).
+#   'invert' flips that side's forward sense in software -- set it True instead
+#   of swapping wires if a wheel spins the wrong way.
 # ---------------------------------------------------------------------------
 MOTORS = {
-    "left":  {"in1": 17, "in2": 27, "en": 22},
-    "right": {"in1": 23, "in2": 24, "en": 18},
+    "left":  {"dir": 16, "pwm": 12, "invert": False},
+    "right": {"dir": 20, "pwm": 13, "invert": False},
 }
-MOTOR_PWM_HZ = 1000              # PWM frequency on the enable pins (if used)
+MOTOR_PWM_HZ = 1000              # PWM frequency on the speed pins
 MOTOR_DEADZONE = 0.05            # |side command| below this counts as stop
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ for is a wall straight ahead — the right side never triggers a turn on its own
 | `config.py` | **All** hardcoded values: arena size, sensor pins, distance thresholds, speeds, turn timing. Tune here, never in the logic. |
 | `navigation.py` | Pure decision logic. `NavigationController.decide(readings) -> Command`. No hardware. |
 | `sensors.py` | HC-SR04 driver. Reads real sensors on a Pi; returns `inf` (or a supplied simulator) elsewhere. |
-| `motors.py` | Tank / skid-steer driver for two H-bridges (direction pins + optional PWM enable). Prints intent in dry mode off-Pi. |
+| `motors.py` | Tank / skid-steer driver, one DIR + one PWM pin per motor. Prints intent in dry mode off-Pi. |
 | `main.py` | The control loop: read → decide → drive. |
 | `simulate.py` | Scripted off-hardware run that walks the car down a lane and into a front wall. |
 | `test_navigation.py` | Assertions for every branch of the turn logic. |
@@ -62,12 +62,12 @@ to check (e.g. a square: forward, right, forward, right, ...).
 
 ## Wiring it to real hardware
 
-- Set the BCM pin numbers in `config.SENSORS` to match your wiring.
-- Set the motor pins in `config.MOTORS` (two H-bridges, one per side). Each side
-  has `in1`/`in2` direction pins. For your setup (enable tied high, direction
-  only) set `en: None` — the driver then runs full-speed on/off and still
-  steers bang-bang and turns in place. To get proportional speed later, point
-  `en` at a pin and the driver drives it with PWM.
+- Set the BCM pin numbers in `config.SENSORS` to match your wiring. Keep them
+  clear of the motor pins (`12, 13, 16, 20`).
+- Motors are DIR + PWM, one per side, in `config.MOTORS`: `dir` is the
+  direction line (forward = HIGH), `pwm` is the speed line (0..100% duty). If a
+  wheel spins the wrong way, set that side's `invert: True` instead of swapping
+  wires.
 - Turns are **open-loop timed**: the car spins at `TURN_SPEED` for `TURN_TIME_S`
   seconds (no IMU/encoders). Measure the real 90° turn time on the car and set
   `TURN_TIME_S` in `config.py`.
