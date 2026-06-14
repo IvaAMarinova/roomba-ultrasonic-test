@@ -1,11 +1,21 @@
 # ---------------------------------------------------------------------------
 # Arena geometry (known and fixed for the competition).
-# Not used by the turn logic directly yet, but kept here so the future route
-# planner has a single source of truth.
 # ---------------------------------------------------------------------------
-ARENA_WIDTH_CM = 200.0
-ARENA_LENGTH_CM = 200.0
-LANE_WIDTH_CM = 30.0          # width of one serpentine sweep lane
+ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
+ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
+
+ROBOT_WIDTH_CM = 50.0         # physical width of the car
+
+# How far the car shifts sideways at each end-of-lane U-turn. For full coverage
+# with no gaps this must be <= ROBOT_WIDTH_CM; a little less gives overlap.
+# 210 / 45 ~= 5 lanes. Bigger = wider shift (faster, but leaves unswept strips
+# once it exceeds the car width).
+LANE_WIDTH_CM = 45.0
+
+# Measured forward travel speed at DRIVE_SPEED, in cm/s. Used to convert the
+# lane-width shift into an open-loop drive time. MEASURE THIS on the real car
+# (drive forward at DRIVE_SPEED for a known time, divide distance by time).
+DRIVE_CM_PER_S = 30.0
 
 # ---------------------------------------------------------------------------
 # Ultrasonic sensor layout.
@@ -22,7 +32,7 @@ SENSORS = {
     "front_left":   {"trig": 23, "echo": 24, "enabled": True},
     "front_center": {"trig": 27,  "echo": 22, "enabled": True},
     "front_right":  {"trig": 6, "echo": 5, "enabled": True},
-    "right_front":  {"trig": 17, "echo": 4, "enabled": True},  # right, toward front
+    "right_front":  {"trig": 17, "echo": 4, "enabled": False},  # right, toward front
     "right_rear":   {"trig": 22, "echo": 25, "enabled": False},  # right, toward rear
 }
 
@@ -85,7 +95,7 @@ CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
 #       H-bridges and turning on the real car (no sensors / dividers needed yet).
 #   USE_SENSORS = True  -> normal sensor-driven navigation.
 # ---------------------------------------------------------------------------
-USE_SENSORS = False
+USE_SENSORS = True
 
 # Open-loop maneuver script used when USE_SENSORS is False.
 # Each step is (action, seconds), where action is one of:

@@ -27,9 +27,12 @@ for is a wall straight ahead — the right side never triggers a turn on its own
 `decide()` reduces the 5 readings to a couple of flags and picks one action:
 
 1. **Wall straight ahead** (nearest of the 3 front sensors ≤ `FRONT_STOP_DISTANCE_CM`)
-   → end of lane, rotate in place. Direction simply alternates every turn,
-   **starting left**: left, right, left, right, … (independent of the side
-   sensors). This is what marches the serpentine across the arena.
+   → end of lane. `main.execute()` runs a **U-turn into the next lane**: rotate
+   90°, drive forward `LANE_WIDTH_CM` (the sideways shift), rotate 90° the same
+   way. Direction alternates every turn, **starting left**: left, right, left, …
+   (independent of the side sensors). This is what marches the serpentine across
+   the arena. The forward shift is open-loop timed as
+   `LANE_WIDTH_CM / DRIVE_CM_PER_S`, so both must be tuned on the real car.
 2. **Otherwise** → cruise forward, with a steering trim that holds the car
    parallel to and `RIGHT_TARGET_DISTANCE_CM` from the right wall. Slows to
    `SLOW_SPEED` inside `FRONT_SLOW_DISTANCE_CM`.
@@ -79,8 +82,10 @@ to check (e.g. a square: forward, right, forward, right, ...).
 
 ## Next steps (not yet implemented)
 
-- Real route planner that uses `ARENA_WIDTH_CM` / `LANE_WIDTH_CM` to track which
-  lane the car is on, instead of the serpentine alternation stub.
+- **Lane counting / "done" condition.** The U-turn shifts one lane, but nothing
+  counts lanes, so the car never knows when the whole arena is covered (≈
+  `ARENA_WIDTH_CM / LANE_WIDTH_CM` lanes) and never stops on its own.
+- Closed-loop turns and lane shift via odometry/IMU (everything is open-loop
+  timed today: `TURN_TIME_S` and `LANE_WIDTH_CM / DRIVE_CM_PER_S`).
 - Left-side sensors (the spec mentions possibly adding 2 per side) — add them to
-  `config.SENSORS` and a symmetric left-corner branch in `navigation.py`.
-- Closed-loop turns via odometry/IMU.
+  `config.SENSORS` and use them in `navigation.py`.
