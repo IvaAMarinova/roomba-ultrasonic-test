@@ -41,8 +41,24 @@ Missing / out-of-range sensors are passed as `float('inf')`.
 ```bash
 python3 test_navigation.py   # unit tests, no hardware needed
 python3 simulate.py          # scripted scenario, prints each decision
-python3 main.py              # live loop (real sensors on a Pi; dry otherwise)
+python3 main.py              # run on the car (mode set by config.USE_SENSORS)
 ```
+
+## Bring-up: drive test first, sensors later
+
+`config.USE_SENSORS` selects what `main.py` does on the car:
+
+- **`USE_SENSORS = False`** (default) — open-loop **drive test**. Runs the
+  hardcoded `DRIVE_TEST_SEQUENCE` (forward / left / right / stop, each for a set
+  number of seconds) and never touches the sensors. Use this first to confirm
+  the motors, H-bridge wiring and turning are correct. No sensors or ECHO
+  voltage dividers need to be connected yet. Tune `TURN_TIME_S` here until the
+  `left`/`right` steps give a clean 90°.
+- **`USE_SENSORS = True`** — full sensor-driven navigation (read → decide →
+  drive). Flip this on once the drive test looks right.
+
+Edit `DRIVE_TEST_SEQUENCE` in `config.py` to script whatever maneuver you want
+to check (e.g. a square: forward, right, forward, right, ...).
 
 ## Wiring it to real hardware
 

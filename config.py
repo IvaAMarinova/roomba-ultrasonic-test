@@ -76,3 +76,25 @@ MOTOR_DEADZONE = 0.05            # |side command| below this counts as stop
 # Control loop.
 # ---------------------------------------------------------------------------
 CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
+
+# ---------------------------------------------------------------------------
+# Bring-up mode.
+#   USE_SENSORS = False -> ignore the ultrasonic sensors entirely and just run
+#       the open-loop maneuver script below. Use this to check the motors,
+#       H-bridges and turning on the real car (no sensors / dividers needed yet).
+#   USE_SENSORS = True  -> normal sensor-driven navigation.
+# ---------------------------------------------------------------------------
+USE_SENSORS = False
+
+# Open-loop maneuver script used when USE_SENSORS is False.
+# Each step is (action, seconds), where action is one of:
+#   "forward", "left", "right", "stop".
+# Turn steps use TURN_TIME_S so they should be ~90 degrees once it's tuned.
+DRIVE_TEST_SEQUENCE = [
+    ("forward", 2.0),
+    ("left",    TURN_TIME_S),
+    ("forward", 2.0),
+    ("right",   TURN_TIME_S),
+    ("forward", 2.0),
+    ("stop",    1.0),
+]
