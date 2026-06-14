@@ -10,7 +10,7 @@ ROBOT_WIDTH_CM = 50.0         # physical width of the car
 # with no gaps this must be <= ROBOT_WIDTH_CM; a little less gives overlap.
 # 210 / 45 ~= 5 lanes. Bigger = wider shift (faster, but leaves unswept strips
 # once it exceeds the car width).
-LANE_WIDTH_CM = 45.0
+LANE_WIDTH_CM = 50.0
 
 # Measured forward travel speed at DRIVE_SPEED, in cm/s. Used to convert the
 # lane-width shift into an open-loop drive time. MEASURE THIS on the real car
@@ -62,14 +62,14 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # Motion parameters.
 # ---------------------------------------------------------------------------
 DRIVE_SPEED = 1                # nominal forward speed (0..1)
-SLOW_SPEED = 0.3                 # forward speed when an obstacle is getting close
-TURN_SPEED = 0.5                 # in-place rotation speed
+SLOW_SPEED = 0.5                 # forward speed when an obstacle is getting close
+TURN_SPEED = 0.7                 # in-place rotation speed
 STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall
 MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
 
 # Seconds to rotate 90 degrees in place at TURN_SPEED. No IMU/encoders: this is
 # just a tuned constant -- measure it on the actual car and adjust.
-TURN_TIME_S = 13
+TURN_TIME_S = 6
 
 # ---------------------------------------------------------------------------
 # Motor driver: tank / skid steer, one DIR + one PWM pin per motor (BCM).

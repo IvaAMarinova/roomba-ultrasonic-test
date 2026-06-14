@@ -37,11 +37,18 @@ def execute(cmd, motors, cfg):
         motors.drive(cmd.speed, cmd.steer)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         # End-of-lane U-turn: rotate 90 deg, shift one lane width to the side,
-        # rotate 90 deg the same way to face back down the next lane.
+        # rotate 90 deg the same way to face back down the next lane. This whole
+        # maneuver is ONE decision; the steps below are logged so the second
+        # spin isn't a surprise (no sensors are read while it runs).
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
+        shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
+        print(f"    [u-turn] spin {direction} 90deg ({cfg.TURN_TIME_S:.2f}s)")
         _spin_90(motors, cfg, direction)
+        print(f"    [u-turn] forward {cfg.LANE_WIDTH_CM:.0f}cm lane shift ({shift_s:.2f}s)")
         _advance_one_lane(motors, cfg)
+        print(f"    [u-turn] spin {direction} 90deg ({cfg.TURN_TIME_S:.2f}s)")
         _spin_90(motors, cfg, direction)
+        print("    [u-turn] done, resuming sensing")
     elif cmd.action is Action.STOP:
         motors.stop()
 
