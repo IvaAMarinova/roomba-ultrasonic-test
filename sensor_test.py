@@ -16,8 +16,10 @@ import config
 from sensors import UltrasonicArray
 
 
-def format_value(dist):
-    return "  --  " if dist == float("inf") else f"{dist:6.1f}"
+def format_value(dist, enabled):
+    if not enabled:
+        return "off"
+    return "--" if dist == float("inf") else f"{dist:.1f}"
 
 
 def main():
@@ -27,12 +29,14 @@ def main():
     period = 1.0 / cfg.CONTROL_LOOP_HZ
 
     print(f"hardware sensors: {sensors.using_hardware}  (Ctrl-C to stop)")
-    print("distances in cm; '--' = out of range / no echo\n")
+    print("distances in cm; '--' = out of range / no echo; 'off' = disabled\n")
     print("  ".join(f"{n:>12}" for n in names))
     try:
         while True:
             readings = sensors.read_all()
-            print("  ".join(f"{format_value(readings[n]):>12}" for n in names))
+            print("  ".join(
+                f"{format_value(readings[n], sensors.is_enabled(n)):>12}"
+                for n in names))
             time.sleep(period)
     except KeyboardInterrupt:
         pass

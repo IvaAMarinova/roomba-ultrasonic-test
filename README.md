@@ -42,6 +42,7 @@ Missing / out-of-range sensors are passed as `float('inf')`.
 python3 test_navigation.py   # unit tests, no hardware needed
 python3 simulate.py          # scripted scenario, prints each decision
 python3 sensor_test.py       # just read & print all sensors (wiring check)
+python3 sensor_diagnostics.py # per-sensor pins + raw samples + distance (debug)
 python3 main.py              # run on the car (mode set by config.USE_SENSORS)
 ```
 
@@ -64,7 +65,10 @@ to check (e.g. a square: forward, right, forward, right, ...).
 ## Wiring it to real hardware
 
 - Set the BCM pin numbers in `config.SENSORS` to match your wiring. Keep them
-  clear of the motor pins (`12, 13, 16, 20`).
+  clear of the motor pins (`12, 13, 16, 20`). Set a sensor's `enabled: False` to
+  switch it off individually (its pins are left untouched and it always reads as
+  "no echo") — handy for bringing sensors up one at a time. `USE_SENSORS` is the
+  separate global switch between drive-test and navigation modes.
 - Motors are DIR + PWM, one per side, in `config.MOTORS`: `dir` is the
   direction line (forward = HIGH), `pwm` is the speed line (0..100% duty). If a
   wheel spins the wrong way, set that side's `invert: True` instead of swapping

@@ -10,17 +10,20 @@ LANE_WIDTH_CM = 30.0          # width of one serpentine sweep lane
 # ---------------------------------------------------------------------------
 # Ultrasonic sensor layout.
 #   5x HC-SR04: 3 facing forward, 2 facing right.
-#   Each entry: logical name -> (TRIG pin, ECHO pin) in BCM numbering.
+#   Each entry: logical name -> {TRIG pin, ECHO pin, enabled} in BCM numbering.
 #   Adjust the pin numbers to match your wiring.
+#   "enabled": False -> that sensor is never read (its GPIO is left untouched)
+#   and its distance always reports as "no echo". Use it to bring sensors up one
+#   at a time, or to ignore one that isn't wired / is faulty.
 # ---------------------------------------------------------------------------
 # NOTE: pins 12, 13, 16, 20 are used by the motors (see MOTORS below), so the
 # sensors are wired clear of them. Change these to match your actual wiring.
 SENSORS = {
-    "front_left":   {"trig": 23,  "echo": 24},
-    "front_center": {"trig": 4,  "echo": 19},
-    "front_right":  {"trig": 26, "echo": 21},
-    "right_front":  {"trig": 17, "echo": 27},   # right side, toward the front
-    "right_rear":   {"trig": 22, "echo": 25},   # right side, toward the rear
+    "front_left":   {"trig": 23, "echo": 24, "enabled": True},
+    "front_center": {"trig": 4,  "echo": 19, "enabled": True},
+    "front_right":  {"trig": 26, "echo": 21, "enabled": True},
+    "right_front":  {"trig": 17, "echo": 27, "enabled": True},  # right, toward front
+    "right_rear":   {"trig": 22, "echo": 25, "enabled": True},  # right, toward rear
 }
 
 # Logical groupings used by the navigation logic.

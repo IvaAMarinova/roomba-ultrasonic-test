@@ -39,9 +39,15 @@ class UltrasonicArray:
     def using_hardware(self):
         return self._gpio_ready
 
+    def is_enabled(self, name):
+        """Whether a sensor is switched on in config (defaults to True)."""
+        return self.cfg.SENSORS[name].get("enabled", True)
+
     def _setup_gpio(self):
         GPIO.setmode(GPIO.BCM)
-        for spec in self.cfg.SENSORS.values():
+        for name, spec in self.cfg.SENSORS.items():
+            if not self.is_enabled(name):
+                continue  # leave disabled sensors' pins untouched
             GPIO.setup(spec["trig"], GPIO.OUT)
             GPIO.setup(spec["echo"], GPIO.IN)
             GPIO.output(spec["trig"], False)
@@ -54,15 +60,31 @@ class UltrasonicArray:
 
     def read(self, name):
         """Distance in cm for one sensor, or float('inf') if unknown/out of range."""
+        if not self.is_enabled(name):
+            return INF  # disabled -> treated as 'sees nothing'
         if self.simulator is not None:
             return self.simulator(name)
         if not self._gpio_ready:
             return INF
-        samples = [self._read_once(name) for _ in range(self.cfg.SENSOR_SAMPLES)]
-        samples = [s for s in samples if s is not None]
+        samples = [s for s in self.read_raw(name) if s is not None]
         if not samples:
             return INF
         return statistics.median(samples)
+
+    def read_raw(self, name):
+        """Per-sample distances for one sensor, before median filtering.
+
+        Returns a list of length SENSOR_SAMPLES; each entry is a distance in cm
+        or None for a timed-out / out-of-range ping. Empty list if the sensor is
+        disabled or there is no GPIO. Diagnostic use (see sensor_diagnostics.py).
+        """
+        if not self.is_enabled(name):
+            return []
+        if self.simulator is not None:
+            return [self.simulator(name)]
+        if not self._gpio_ready:
+            return []
+        return [self._read_once(name) for _ in range(self.cfg.SENSOR_SAMPLES)]
 
     def _read_once(self, name):
         """A single trigger/echo cycle. Returns cm or None on timeout/out-of-range."""
