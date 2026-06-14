@@ -43,8 +43,9 @@ RIGHT_SENSORS = ("right_front", "right_rear")
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 400.0    # wall straight ahead -> end of lane, must turn
+FRONT_STOP_DISTANCE_CM = 40.0    # wall this close ahead -> end of lane, must turn
 FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
+# NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
 RIGHT_WALL_DISTANCE_CM = 25.0    # closer than this => a wall is present on the right
 RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall while wall-following
 
