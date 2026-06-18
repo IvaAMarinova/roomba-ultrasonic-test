@@ -18,11 +18,68 @@ from motors import MotorDriver
 from navigation import NavigationController, Action
 
 
-def _spin_90(motors, cfg, direction):
-    """Open-loop ~90 deg in-place rotation (no IMU)."""
+def _angle_diff(a, b):
+    """Shortest signed difference a - b, normalized to (-180, 180] degrees."""
+    return (a - b + 180.0) % 360.0 - 180.0
+
+
+def _spin_timed(motors, cfg, direction):
+    """Original open-loop ~90 deg in-place rotation (no IMU)."""
     (motors.turn_left if direction == "left" else motors.turn_right)(cfg.TURN_SPEED)
     time.sleep(cfg.TURN_TIME_S)
     motors.stop()
+
+
+def _spin_imu(motors, cfg, direction, imu):
+    """Rotate in place until the measured heading change reaches the target.
+
+    Accumulates the signed per-sample yaw delta (wrap-safe) so it works in
+    either direction and across the +/-180 wrap. Corrupted single-sample jumps
+    are ignored, and a hard timeout guarantees the spin always ends. Returns the
+    degrees actually turned, or None if no heading could be read at all (so the
+    caller can fall back to the timed spin).
+    """
+    start = imu.yaw()
+    if start is None:
+        return None
+
+    turn_fn = motors.turn_left if direction == "left" else motors.turn_right
+    target = cfg.TURN_ANGLE_DEG - cfg.IMU_TURN_TOLERANCE_DEG
+    prev = start
+    turned = 0.0
+
+    turn_fn(cfg.TURN_SPEED)
+    deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
+    while time.time() < deadline:
+        time.sleep(cfg.IMU_TURN_POLL_S)
+        cur = imu.yaw()
+        if cur is None:
+            continue
+        step = _angle_diff(cur, prev)
+        prev = cur
+        if abs(step) > cfg.IMU_GLITCH_MAX_STEP_DEG:
+            continue  # corrupted I2C read -- ignore this sample
+        turned += step
+        if abs(turned) >= target:
+            break
+    motors.stop()
+    return abs(turned)
+
+
+def _spin_90(motors, cfg, direction, imu=None):
+    """Rotate ~TURN_ANGLE_DEG in place.
+
+    Uses IMU heading feedback when an IMU is present and USE_IMU_TURN is set;
+    otherwise (or if the IMU yields no reading) falls back to the timed spin.
+    """
+    if imu is not None and imu.available and getattr(cfg, "USE_IMU_TURN", False):
+        turned = _spin_imu(motors, cfg, direction, imu)
+        if turned is not None:
+            print(f"    [u-turn] IMU spin {direction} {turned:.1f}deg "
+                  f"(target {cfg.TURN_ANGLE_DEG:.0f})")
+            return
+        print("    [u-turn] IMU gave no heading -> timed spin fallback")
+    _spin_timed(motors, cfg, direction)
 
 
 def _advance_one_lane(motors, cfg):
@@ -32,7 +89,7 @@ def _advance_one_lane(motors, cfg):
     motors.stop()
 
 
-def execute(cmd, motors, cfg):
+def execute(cmd, motors, cfg, imu=None):
     if cmd.action is Action.FORWARD:
         motors.drive(cmd.speed, cmd.steer)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
@@ -42,12 +99,12 @@ def execute(cmd, motors, cfg):
         # spin isn't a surprise (no sensors are read while it runs).
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
         shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
-        print(f"    [u-turn] spin {direction} 90deg ({cfg.TURN_TIME_S:.2f}s)")
-        _spin_90(motors, cfg, direction)
+        print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
+        _spin_90(motors, cfg, direction, imu)
         print(f"    [u-turn] forward {cfg.LANE_WIDTH_CM:.0f}cm lane shift ({shift_s:.2f}s)")
         _advance_one_lane(motors, cfg)
-        print(f"    [u-turn] spin {direction} 90deg ({cfg.TURN_TIME_S:.2f}s)")
-        _spin_90(motors, cfg, direction)
+        print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
+        _spin_90(motors, cfg, direction, imu)
         print("    [u-turn] done, resuming sensing")
     elif cmd.action is Action.STOP:
         motors.stop()
@@ -60,23 +117,32 @@ def _format(readings):
     )
 
 
-def run_drive_test(motors, cfg):
-    """Blind, open-loop maneuver script -- no sensors, just exercise the drive."""
-    moves = {
-        "forward": lambda: motors.drive(cfg.DRIVE_SPEED, 0.0),
-        "left":    lambda: motors.turn_left(cfg.TURN_SPEED),
-        "right":   lambda: motors.turn_right(cfg.TURN_SPEED),
-        "stop":    motors.stop,
-    }
-    print("USE_SENSORS = False -> running open-loop drive test")
+def run_drive_test(motors, cfg, imu=None):
+    """Blind, open-loop maneuver script -- no ultrasonic sensors.
+
+    Forward/stop steps still run for their scripted number of seconds, but the
+    "left"/"right" turn steps now rotate by TURN_ANGLE_DEG using IMU heading
+    feedback (falling back to the timed spin if no IMU is present), instead of
+    spinning for the hardcoded step duration.
+    """
+    turn_mode = ("IMU heading" if (imu is not None and imu.available
+                 and getattr(cfg, "USE_IMU_TURN", False)) else f"timed {cfg.TURN_TIME_S}s")
+    print(f"USE_SENSORS = False -> open-loop drive test (turns: {turn_mode})")
     for action, seconds in cfg.DRIVE_TEST_SEQUENCE:
+        if action in ("left", "right"):
+            print(f"[drive-test] turn {action} {cfg.TURN_ANGLE_DEG:.0f}deg")
+            _spin_90(motors, cfg, action, imu)
+            continue
         print(f"[drive-test] {action:<7} for {seconds:.2f}s")
-        moves[action]()
+        if action == "forward":
+            motors.drive(cfg.DRIVE_SPEED, 0.0)
+        else:  # "stop"
+            motors.stop()
         time.sleep(seconds)
     motors.stop()
 
 
-def run_navigation(motors, cfg):
+def run_navigation(motors, cfg, imu=None):
     """Sensor-driven navigation loop."""
     # Imported here so the drive-test mode never needs the sensor stack.
     from sensors import UltrasonicArray
@@ -84,14 +150,16 @@ def run_navigation(motors, cfg):
     sensors = UltrasonicArray(cfg)
     nav = NavigationController(cfg)
     period = 1.0 / cfg.CONTROL_LOOP_HZ
+    turn_mode = "IMU heading" if (imu is not None and imu.available
+                                  and cfg.USE_IMU_TURN) else f"timed {cfg.TURN_TIME_S}s"
     print(f"USE_SENSORS = True -> navigation (hardware sensors: "
-          f"{sensors.using_hardware})")
+          f"{sensors.using_hardware}, turns: {turn_mode})")
     try:
         while True:
             readings = sensors.read_all()
             cmd = nav.decide(readings)
             print(f"{_format(readings)} -> {cmd.action.name:<10} ({cmd.reason})")
-            execute(cmd, motors, cfg)
+            execute(cmd, motors, cfg, imu)
             time.sleep(period)
     finally:
         sensors.cleanup()
@@ -100,11 +168,17 @@ def run_navigation(motors, cfg):
 def main():
     cfg = config
     motors = MotorDriver(cfg)
+    # IMU is optional: if absent/disabled, IMU.available stays False and turns
+    # transparently fall back to the timed TURN_TIME_S spin.
+    imu = None
+    if getattr(cfg, "USE_IMU_TURN", False):
+        from imu import IMU
+        imu = IMU(cfg)
     try:
         if cfg.USE_SENSORS:
-            run_navigation(motors, cfg)
+            run_navigation(motors, cfg, imu)
         else:
-            run_drive_test(motors, cfg)
+            run_drive_test(motors, cfg, imu)
     except KeyboardInterrupt:
         pass
     finally:

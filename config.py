@@ -67,9 +67,29 @@ TURN_SPEED = 0.7                 # in-place rotation speed
 STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall
 MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
 
-# Seconds to rotate 90 degrees in place at TURN_SPEED. No IMU/encoders: this is
-# just a tuned constant -- measure it on the actual car and adjust.
+# Seconds to rotate 90 degrees in place at TURN_SPEED. Used as the FALLBACK when
+# no IMU is available (see USE_IMU_TURN below). Measure it on the actual car.
 TURN_TIME_S = 4
+
+# ---------------------------------------------------------------------------
+# IMU-based (closed-loop) turning.
+#   With a BNO086 IMU present, an end-of-lane spin rotates until the *measured*
+#   heading change reaches TURN_ANGLE_DEG, instead of spinning blindly for
+#   TURN_TIME_S. This removes the dependence on the hand-tuned TURN_TIME_S and
+#   stays accurate as battery voltage / floor friction change.
+#
+#   USE_IMU_TURN is the master ON/OFF switch for this:
+#     True  -> turn by IMU heading (auto-falls back to timed if the IMU is
+#              missing or fails to initialise -- nothing breaks without it).
+#     False -> IMU is never touched; ALL spins use the timed TURN_TIME_S spin.
+# ---------------------------------------------------------------------------
+USE_IMU_TURN = True              # True = IMU heading-feedback turns, False = timed (TURN_TIME_S)
+TURN_ANGLE_DEG = 90.0            # target rotation for one end-of-lane spin
+IMU_TURN_TOLERANCE_DEG = 3.0     # stop this many deg early to allow for coast/momentum
+IMU_TURN_TIMEOUT_S = TURN_TIME_S * 2.5  # safety cap: never spin longer than this
+IMU_GLITCH_MAX_STEP_DEG = 45.0   # per-sample heading jumps larger than this are
+                                 # treated as corrupted I2C reads and ignored
+IMU_TURN_POLL_S = 0.01           # how often to re-read heading during a spin
 
 # ---------------------------------------------------------------------------
 # Motor driver: tank / skid steer, one DIR + one PWM pin per motor (BCM).
