@@ -61,9 +61,9 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # ---------------------------------------------------------------------------
 # Motion parameters.
 # ---------------------------------------------------------------------------
-DRIVE_SPEED = 1                # nominal forward speed (0..1)
-SLOW_SPEED = 0.5                 # forward speed when an obstacle is getting close
-TURN_SPEED = 0.7                 # in-place rotation speed
+DRIVE_SPEED = 0.6                # nominal forward speed (0..1)
+SLOW_SPEED = 0.4                 # forward speed when an obstacle is getting close
+TURN_SPEED = 0.2                 # in-place rotation speed
 STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall
 MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
 
@@ -90,6 +90,14 @@ IMU_TURN_TIMEOUT_S = TURN_TIME_S * 2.5  # safety cap: never spin longer than thi
 IMU_GLITCH_MAX_STEP_DEG = 45.0   # per-sample heading jumps larger than this are
                                  # treated as corrupted I2C reads and ignored
 IMU_TURN_POLL_S = 0.01           # how often to re-read heading during a spin
+
+# Stall recovery during a spin. If after IMU_TURN_BOOST_AFTER_S of turning the
+# IMU still shows we've covered less than half of TURN_ANGLE_DEG, the tires are
+# probably binding (too much tension on the floor) -- bump TURN_SPEED up by
+# IMU_TURN_BOOST_FACTOR to break through the friction. The boosted speed is
+# clamped to 1.0. Set IMU_TURN_BOOST_AFTER_S = None to disable the boost.
+IMU_TURN_BOOST_AFTER_S = 6     # how long to wait before boosting a slow spin
+IMU_TURN_BOOST_FACTOR = 1.4      # multiply TURN_SPEED by this when stalled
 
 # ---------------------------------------------------------------------------
 # Motor driver: tank / skid steer, one DIR + one PWM pin per motor (BCM).

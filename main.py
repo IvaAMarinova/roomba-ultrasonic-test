@@ -48,8 +48,17 @@ def _spin_imu(motors, cfg, direction, imu):
     prev = start
     turned = 0.0
 
-    turn_fn(cfg.TURN_SPEED)
-    deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
+    # Stall recovery: if we've been turning for boost_after seconds but the IMU
+    # still shows less than half the goal, the tires are likely binding -- bump
+    # the spin speed up to break through the friction. Boost once, then hold.
+    speed = cfg.TURN_SPEED
+    boost_after = getattr(cfg, "IMU_TURN_BOOST_AFTER_S", None)
+    half_goal = cfg.TURN_ANGLE_DEG / 2.0
+    boosted = False
+
+    turn_fn(speed)
+    start_t = time.time()
+    deadline = start_t + cfg.IMU_TURN_TIMEOUT_S
     while time.time() < deadline:
         time.sleep(cfg.IMU_TURN_POLL_S)
         cur = imu.yaw()
@@ -62,6 +71,15 @@ def _spin_imu(motors, cfg, direction, imu):
         turned += step
         if abs(turned) >= target:
             break
+        if (not boosted and boost_after is not None
+                and time.time() - start_t >= boost_after
+                and abs(turned) < half_goal):
+            speed = min(1.0, cfg.TURN_SPEED * cfg.IMU_TURN_BOOST_FACTOR)
+            turn_fn(speed)
+            boosted = True
+            print(f"    [u-turn] stall: only {abs(turned):.1f}deg in "
+                  f"{boost_after:.1f}s (< half of {cfg.TURN_ANGLE_DEG:.0f}) "
+                  f"-> boost spin speed {cfg.TURN_SPEED:.2f} -> {speed:.2f}")
     motors.stop()
     return abs(turned)
 
