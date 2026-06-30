@@ -20,7 +20,9 @@ corrupted/unknown sensor batches instead of crashing the turn loop.
 """
 
 import math
+import sys
 import time
+import traceback
 
 try:
     import board
@@ -51,12 +53,26 @@ if _HAS_IMU_LIBS:
                 self._process_report(*self._packet_slices.pop())
         except KeyError:
             # Unknown report_id -- garbled packet from Pi hardware I2C.
+            print(
+                f"[imu] WARNING: dropping garbled BNO08x packet "
+                f"(channel={packet.channel_number})",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
             self._packet_slices.clear()
         except RuntimeError as error:
             self._packet_slices.clear()
             # Incomplete batch during enable_feature(); init retries handle that.
             if not (error.args and error.args[0] == "Unprocessable Batch bytes"):
                 raise
+            print(
+                f"[imu] WARNING: dropping unprocessable BNO08x batch "
+                f"(channel={packet.channel_number})",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc()
 
     BNO08X._handle_packet = _handle_packet_tolerant
 
