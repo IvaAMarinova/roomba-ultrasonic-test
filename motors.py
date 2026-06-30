@@ -89,8 +89,11 @@ class MotorDriver:
         self._pwm[side].ChangeDutyCycle(duty)
 
     def cleanup(self):
-        if self.dry_run:
+        if self.dry_run or not self._pwm:
             return
         for pwm in self._pwm.values():
             pwm.stop()
+        # Drop PWM refs before GPIO.cleanup(); otherwise PWM.__del__ runs at
+        # interpreter shutdown and tries to stop() on an already-freed handle.
+        self._pwm.clear()
         GPIO.cleanup()

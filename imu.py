@@ -9,10 +9,14 @@ Mirrors motors.py's philosophy: if the IMU stack or hardware isn't present this
 runs in a disabled mode (``available == False``) and yaw() returns None, so the
 caller transparently falls back to the original timed turn.
 
-Driver note: adafruit_bno08x 1.3.3 chokes on the BNO086's post-reset
-command-channel packets during enable_feature() ("Unprocessable Batch bytes").
-The driver's own _wait_for_packet_type() already skips those channels; we apply
-the same skip to _handle_packet() instead of editing the installed library.
+Driver note: adafruit_bno08x 1.3.3 chokes on some BNO086 packets the Pi's
+hardware I2C delivers corrupted (UNKNOWN report type / KeyError on report_id 0).
+This is usually clock-stretching on the Pi -- see Adafruit's guide and add
+``dtparam=i2c_arm_baudrate=400000`` to /boot/firmware/config.txt, or use
+software I2C (i2c-gpio overlay + adafruit-extended-bus).
+
+We monkey-patch _handle_packet() to skip command-channel traffic and to drop
+corrupted/unknown sensor batches instead of crashing the turn loop.
 """
 
 import math
@@ -27,22 +31,34 @@ try:
         BNO_CHANNEL_EXE,
         BNO_CHANNEL_SHTP_COMMAND,
     )
+    import adafruit_bno08x as _bno08x
     from adafruit_bno08x.i2c import BNO08X_I2C
 
     _HAS_IMU_LIBS = True
 except Exception:  # noqa: BLE001 - board/busio raise NotImplementedError off-Pi
     _HAS_IMU_LIBS = False
+    _bno08x = None
 
 
 if _HAS_IMU_LIBS:
-    _orig_handle_packet = BNO08X._handle_packet
-
-    def _handle_packet_skip_command(self, packet):
+    def _handle_packet_tolerant(self, packet):
+        """Skip command traffic and drop corrupted I2C batches (don't crash)."""
         if packet.channel_number in (BNO_CHANNEL_SHTP_COMMAND, BNO_CHANNEL_EXE):
             return
-        return _orig_handle_packet(self, packet)
+        try:
+            _bno08x._separate_batch(packet, self._packet_slices)
+            while len(self._packet_slices) > 0:
+                self._process_report(*self._packet_slices.pop())
+        except KeyError:
+            # Unknown report_id -- garbled packet from Pi hardware I2C.
+            self._packet_slices.clear()
+        except RuntimeError as error:
+            self._packet_slices.clear()
+            # Incomplete batch during enable_feature(); init retries handle that.
+            if not (error.args and error.args[0] == "Unprocessable Batch bytes"):
+                raise
 
-    BNO08X._handle_packet = _handle_packet_skip_command
+    BNO08X._handle_packet = _handle_packet_tolerant
 
 
 class IMU:
@@ -91,9 +107,9 @@ class IMU:
         try:
             quat = self._bno.quaternion
             x, y, z, w = quat[0], quat[1], quat[2], quat[3]
-        except (TypeError, ValueError, RuntimeError, OSError):
-            # OSError covers the transient I2C TimeoutError ([Errno 110]) the
-            # BNO086 throws under clock stretching -- skip the sample, don't crash.
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError):
+            # KeyError / OSError: garbled I2C traffic on the Pi hardware bus.
+            # Skip the sample and let the turn loop keep polling.
             return None
         siny_cosp = 2 * (w * z + x * y)
         cosy_cosp = 1 - 2 * (y * y + z * z)
