@@ -41,6 +41,36 @@ class Collector:
         return f"blocks={self.count}/{self.capacity}{' FULL' if self.is_full() else ''}"
 
 
+class FrontServo:
+    """The front collection scoop ("багер") servo.
+
+    While driving, the scoop is raised to FRONT_SERVO_UP_DEG on a timer and then
+    returned to FRONT_SERVO_DOWN_DEG (the periodic lift is driven by main's loop;
+    this class just holds the target angle and logs each move).
+
+    TODO(servo): drive the real servo PWM on FRONT_SERVO_PIN here. Today it only
+    tracks/logs the angle so the timing can be exercised without hardware. Dry-run
+    safe off-Pi like the other drivers.
+    """
+
+    def __init__(self, cfg=default_config):
+        self.cfg = cfg
+        self.angle = cfg.FRONT_SERVO_DOWN_DEG
+
+    def move_to(self, deg):
+        """Command the servo to `deg`. Placeholder until the servo lands."""
+        self.angle = deg
+        print(f"[front-servo] -> {deg:.0f}deg (placeholder -- no servo yet)")
+
+    def raise_up(self):
+        """Lift the scoop to the raised angle (FRONT_SERVO_UP_DEG)."""
+        self.move_to(self.cfg.FRONT_SERVO_UP_DEG)
+
+    def lower(self):
+        """Return the scoop to its resting angle (FRONT_SERVO_DOWN_DEG)."""
+        self.move_to(self.cfg.FRONT_SERVO_DOWN_DEG)
+
+
 class Disposer:
     """The back-of-car disposal mechanism (waste-truck style tip into the pit).
 

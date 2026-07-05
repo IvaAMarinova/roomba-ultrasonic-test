@@ -16,7 +16,7 @@ Run on the Pi with:  python3 main.py
 import time
 
 import config
-from actuators import Disposer
+from actuators import Disposer, FrontServo
 from motors import MotorDriver
 from navigation import NavigationController, Action, Mode, angle_diff
 
@@ -320,6 +320,7 @@ def run_navigation(motors, cfg, imu=None):
 
     sensors = UltrasonicArray(cfg)
     disposer = Disposer(cfg)
+    front_servo = FrontServo(cfg)
     nav = NavigationController(cfg)
     period = 1.0 / cfg.CONTROL_LOOP_HZ
 
@@ -337,6 +338,8 @@ def run_navigation(motors, cfg, imu=None):
     print(f"  pit           : ({cfg.PIT_X_CM:.0f}, {cfg.PIT_Y_CM:.0f}) cm, "
           f"arrive within {cfg.PIT_ARRIVAL_RADIUS_CM:.0f} cm")
     print(f"  collection cap: {cfg.COLLECTION_CAPACITY_BLOCKS} blocks")
+    print(f"  front scoop   : lift to {cfg.FRONT_SERVO_UP_DEG:.0f}deg every "
+          f"{cfg.FRONT_SERVO_INTERVAL_S:.0f}s driving, hold {cfg.FRONT_SERVO_HOLD_S:.1f}s")
     print(f"  driving       : {drive_mode}   turns: {turn_mode}")
     print(f"  end of lane   : wall standoff {cfg.FRONT_STOP_DISTANCE_CM:.0f} cm, "
           f">={cfg.FRONT_AGREE_MIN_COUNT}/3 agree, hold {cfg.WALL_PERSIST_TICKS} ticks "
@@ -345,6 +348,7 @@ def run_navigation(motors, cfg, imu=None):
     print("=" * 78)
 
     last_t = time.monotonic()
+    drive_elapsed = 0.0          # driving time since the last front-scoop lift
     try:
         while True:
             now = time.monotonic()
@@ -356,6 +360,18 @@ def run_navigation(motors, cfg, imu=None):
             cmd = nav.decide(readings, yaw, dt)
             _log_status(nav, readings, yaw, cmd)
             execute(cmd, motors, cfg, imu, nav, disposer)
+
+            # Periodically raise the front scoop while cruising. The timer counts
+            # only FORWARD time, so it pauses through the (blocking) U-turns and
+            # disposal maneuvers rather than firing right after one.
+            if cmd.action is Action.FORWARD:
+                drive_elapsed += dt
+                if drive_elapsed >= cfg.FRONT_SERVO_INTERVAL_S:
+                    front_servo.raise_up()          # up to 90 deg (keeps driving)
+                    time.sleep(cfg.FRONT_SERVO_HOLD_S)
+                    front_servo.lower()
+                    drive_elapsed = 0.0
+
             if nav.mode is Mode.DONE:
                 print(f"[nav] coverage complete: swept all {cfg.NUM_LANES} lanes")
                 _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
