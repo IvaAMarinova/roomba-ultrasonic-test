@@ -15,7 +15,7 @@ lanes are swept it stops for good.
 
 **Localization is wall-referenced, not time-based.** Because the arena has bumps
 (wheels slip, so "distance = speed × time" drifts), position is measured against
-the known walls instead: the front sensors' distance to the end wall *is* how far
+the known walls instead: the front sensors' distance to the end wall _is_ how far
 down the lane the car is, and lane-counting gives which lane it's on. Wheel-time
 odometry is only a short-gap **bridge** when a wall momentarily isn't seen. See §1.
 
@@ -55,12 +55,12 @@ The car starts in the **bottom-left corner** at `(START_X_CM, START_Y_CM)` = `(0
 
 Each coordinate has a **slip-immune** source:
 
-| Quantity | Source | Bumps affect it? |
-|---|---|---|
-| **heading** | IMU yaw | no |
-| **cross-lane `x`** | lane counting: `x = START_X + sweep × lane_index × LANE_WIDTH` | no |
-| **along-lane `y`** | **front wall**: `y` derived from the measured gap to the end wall | no |
-| _(fallback)_ | wheel-time odometry `DRIVE_CM_PER_S × time` — only bridges brief gaps | yes, but rarely used |
+| Quantity           | Source                                                                                                                                   | Bumps affect it?     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| **heading**        | IMU yaw                                                                                                                                  | no                   |
+| **cross-lane `x`** | lane counting (`x += sweep × LANE_WIDTH` per U-turn), **re-zeroed off a side wall in the outer lanes** when the side sensors are enabled | no                   |
+| **along-lane `y`** | **front wall**: `y` derived from the measured gap to the end wall                                                                        | no                   |
+| _(fallback)_       | wheel-time odometry `DRIVE_CM_PER_S × time` — only bridges brief gaps                                                                    | yes, but rarely used |
 
 So `DRIVE_CM_PER_S` is **not** the primary position source anymore — it only bridges
 the odd tick a wall isn't seen, provides a rough "where should the wall be" prior,
@@ -73,10 +73,9 @@ the IMU** (steering trim ∝ heading error, `HEADING_HOLD_GAIN` clamped to
 `MAX_HEADING_TRIM`) — this keeps it square to the wall, which is what makes the
 wall distance read cleanly. If a wall is within `FRONT_SLOW_DISTANCE_CM` it slows to
 `SLOW_SPEED`. Every tick it derives `y` from the front wall (when seen) or bridges
-on odometry, and logs which (`src=WALL` / `src=BRIDGE`).
+on odometry, and logs which (`y_src=WALL` / `y_src=BRIDGE`).
 
-> No IMU? Cruising falls back to **open-loop straight** (no trim), and the legacy
-> right-wall follow is still available behind `USE_WALL_FOLLOW = True`.
+> No IMU? Cruising falls back to **open-loop straight** (no steering trim).
 
 ### Trusting the wall — rejecting bumps, blocks, and misses
 
@@ -91,7 +90,8 @@ A close front reading is only believed to be the **end wall** when all three hol
 3. **It persists `WALL_PERSIST_TICKS` ticks.** Kills single-frame glitches.
 
 If the wall momentarily **drops out** (angled/specular miss), `y` coasts on odometry
-for up to `BRIDGE_MAX_S` while the IMU keeps the car square so the wall re-appears.
+while the IMU keeps the car square so the wall re-appears (and the odometry backstop
+still ends the lane if it never does).
 
 ### End of a lane — TURNING (the U-turn)
 
@@ -140,9 +140,10 @@ the pit only once (mid-way), blocks collected afterwards are still aboard, so DO
 triggers **one final trip back to the pit**:
 
 1. Drive to the **start wall** (the pit's side), wherever the sweep ended.
-2. Drive to the **left side wall** (exact `x` from that wall), then move `PIT_X_CM`
-   across to the pit's **middle** — the one spot walls can't mark, so it's measured
-   from the side wall (short hug; the car-sized pit + reverse gives tolerance).
+2. Drive to the **left wall**, then turn to face across and drive until the **far
+   (right) wall** is `WIDTH − PIT_X` away — which puts the car at the pit's middle.
+   Both legs stop on a _front-wall_ distance, so the whole return is wall-referenced
+   (no odometry), and the car-sized pit + reverse gives the tolerance.
 3. Face the start wall so the back points at the pit, **reverse in and dump**, then
    stop for good.
 
@@ -198,7 +199,7 @@ For early bring-up only.
 `USE_SENSORS` in `config.py` picks what `main.py` does:
 
 - **`USE_SENSORS = False` → open-loop drive test.** Runs the hardcoded
-  `DRIVE_TEST_SEQUENCE` and **never reads the ultrasonics**. Use this *first* to
+  `DRIVE_TEST_SEQUENCE` and **never reads the ultrasonics**. Use this _first_ to
   confirm motors, H-bridge wiring, and turning. (`left`/`right` steps still use the
   IMU if `USE_IMU_TURN = True`.)
 - **`USE_SENSORS = True` → full IMU + odometry navigation with disposal.** The real
@@ -247,113 +248,125 @@ Grouped the same way as in the file.
 
 ### 5.1 Arena geometry & odometry
 
-| Setting | What it does | When to change |
-|---|---|---|
-| `ARENA_WIDTH_CM` | Arena size across the lanes (the +x direction). | Match your real arena. |
-| `ARENA_LENGTH_CM` | Arena size along each lane (the +y runs). The wall reference measures against this. | Match your real arena. |
-| `ROBOT_WIDTH_CM` | Physical width of the car. | Measure your car. |
-| `LANE_WIDTH_CM` | Sideways shift per U-turn. **Must be ≤ `ROBOT_WIDTH_CM`** or it leaves gaps; a little less overlaps. | Tune coverage vs. speed. |
-| `NUM_LANES` | How many lanes = a full sweep; the car STOPS (DONE) after finishing the last one. Default `ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)`. | Override to sweep fewer/more lanes. |
-| `DRIVE_CM_PER_S` | Rough forward speed at `DRIVE_SPEED` (cm/s). **Fallback/bridge only** now (position is wall-referenced) — bridges sensor dropouts, the "expected wall" prior, and the lane-shift timing. | Measure once, roughly; it no longer needs to be exact. |
-| `LANE_END_MARGIN_CM` | Odometry **backstop**: turn this far before the far wall *only if a wall is never seen* the whole lane. | Tune. |
+| Setting               | What it does                                                                                                                                                                                | When to change                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `ARENA_WIDTH_CM`      | Arena size across the lanes (the +x direction).                                                                                                                                             | Match your real arena.                                             |
+| `ARENA_LENGTH_CM`     | Arena size along each lane (the +y runs). The wall reference measures against this.                                                                                                         | Match your real arena.                                             |
+| `ROBOT_WIDTH_CM`      | Physical width of the car.                                                                                                                                                                  | Measure your car.                                                  |
+| `LANE_WIDTH_CM`       | Sideways shift per U-turn. **Must be ≤ `ROBOT_WIDTH_CM`** or it leaves gaps; a little less overlaps.                                                                                        | Tune coverage vs. speed.                                           |
+| `NUM_LANES`           | How many lanes = a full sweep; the car STOPS (DONE) after finishing the last one. Default `ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)`.                                                           | Override to sweep fewer/more lanes.                                |
+| `FULL_SPEED_CM_PER_S` | The **one** speed calibration: cm/s at full duty. `DRIVE_CM_PER_S` derives from it (`× DRIVE_SPEED`), so the distance estimate tracks `DRIVE_SPEED` automatically — no separate re-measure. | Measure once (drive at `DRIVE_SPEED`, cm/s ÷ `DRIVE_SPEED`).       |
+| `DRIVE_CM_PER_S`      | **Derived** (`FULL_SPEED_CM_PER_S × DRIVE_SPEED`), not hardcoded. Fallback/bridge only — sensor-dropout bridge, the "expected wall" prior, and lane-shift timing.                           | Don't set directly; change `DRIVE_SPEED` or `FULL_SPEED_CM_PER_S`. |
+| `LANE_END_MARGIN_CM`  | Odometry **backstop**: turn this far before the far wall _only if a wall is never seen_ the whole lane.                                                                                     | Tune.                                                              |
 
 ### 5.2 Start pose & sweep direction
 
-| Setting | What it does |
-|---|---|
-| `START_X_CM` / `START_Y_CM` | Where the car begins, in the (x, y) frame. Default `(0, 0)` = bottom-left corner. **Place the car to match.** |
-| `SERPENTINE_FIRST_TURN` | Which way the first U-turn curls: `"right"` from a bottom-left start (steps +x), `"left"` from a bottom-right start. Then it alternates. |
+| Setting                     | What it does                                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `START_X_CM` / `START_Y_CM` | Where the car begins, in the (x, y) frame. Default `(0, 0)` = bottom-left corner. **Place the car to match.**                            |
+| `SERPENTINE_FIRST_TURN`     | Which way the first U-turn curls: `"right"` from a bottom-left start (steps +x), `"left"` from a bottom-right start. Then it alternates. |
 
 ### 5.3 Disposal pit
 
-| Setting | What it does |
-|---|---|
-| `PIT_X_CM` / `PIT_Y_CM` | Fixed pit centre in the (x, y) frame. **Set to the real pit location.** |
-| `PIT_ARRIVAL_RADIUS_CM` | How close the (wall-referenced) pose must get to count as "at the pit" during the sweep. Size it for the residual error you see near the start wall. |
-| `DISPOSE_BACK_INTO_PIT` | `True` = rotate so the back faces the pit before reversing (needs the IMU). |
-| `DISPOSE_REVERSE_CM` | How far to reverse (after orienting) to seat the rear over the small, car-sized pit. **Tune** so the rear overhangs but the drive wheels stay on the edge. Pulled forward again after dumping. |
-| `DISPOSE_REVERSE_SPEED` | Speed (0..1) for that reverse/pull — slow, for precise placement. |
-| `DISPOSE_HOLD_S` | Placeholder dwell while "dumping" (until the disposal servo lands). |
+| Setting                 | What it does                                                                                                                                                                                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PIT_X_CM` / `PIT_Y_CM` | Fixed pit centre in the (x, y) frame. **Set to the real pit location.**                                                                                                                                                                                        |
+| `PIT_ARRIVAL_RADIUS_CM` | How close the pose must get to count as "at the pit". **Must be ≥ `FRONT_STOP_DISTANCE_CM`** (the car can't reach a wall pit closer than the turn standoff, so a smaller value means it never disposes). Disposal is lane-gated, so a generous radius is safe. |
+| `DISPOSE_BACK_INTO_PIT` | `True` = rotate so the back faces the pit before reversing (needs the IMU).                                                                                                                                                                                    |
+| `DISPOSE_REVERSE_CM`    | How far to reverse (after orienting) to seat the rear over the small, car-sized pit. **Tune** so the rear overhangs but the drive wheels stay on the edge. Pulled forward again after dumping.                                                                 |
+| `DISPOSE_REVERSE_SPEED` | Speed (0..1) for that reverse/pull — slow, for precise placement.                                                                                                                                                                                              |
+| `DISPOSE_HOLD_S`        | Placeholder dwell while "dumping" (until the disposal servo lands).                                                                                                                                                                                            |
 
 ### 5.4 Collection (future servo)
 
-| Setting | What it does |
-|---|---|
+| Setting                      | What it does                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `COLLECTION_CAPACITY_BLOCKS` | The "bucket full" count. Wired to the collection servo later; today the count is a stub (always 0) so disposal triggers on pit arrival alone. |
 
 ### 5.5 Sensors (`SENSORS` dict + groupings)
 
 Each sensor is `name: {"trig": <pin>, "echo": <pin>, "enabled": <bool>}` in **BCM**.
+The array has **9 positions — 3 front, 2 right, 2 left, 2 back — but only the 3
+front are `enabled`**; the rest are wired into config (pins reserved) and switched
+off until you bring them up. Only the front sensors are read by the nav today.
 
-- **`trig` / `echo`** — match your wiring; keep clear of the motor pins (`12, 13, 16, 20`).
+- **`trig` / `echo`** — match your wiring; keep clear of the motor pins (`12, 13, 16,
+20`) and the IMU I2C pins (`2, 3`). Every **enabled** sensor needs unique pins.
 - **`enabled`** — `False` leaves that sensor's pins untouched and it always reports
-  "no echo". Good for bring-up one at a time. (The two `right_*` sensors default to
-  `False`; they're only needed for the legacy `USE_WALL_FOLLOW` mode.)
-- **`FRONT_SENSORS`** — the 3 front names, the **primary** position reference.
-  **Mount them spread edge-to-edge, outboard of the bucket, level, above block
-  height** (see the comment in `config.py`). **`RIGHT_SENSORS`** — legacy wall-follow.
+  "no echo". Flip to `True` as you bring each up. (The `right_*`/`left_*`/`back_*`
+  positions default to `False`.)
+- **Groupings** — **`FRONT_SENSORS`** (the primary position reference; mount spread
+  edge-to-edge, outboard of the bucket, level, above block height — see `config.py`),
+  **`LEFT_SENSORS`** / **`RIGHT_SENSORS`** (enable to get the **edge re-zero of `x`**
+  — §5.7; mount level/above blocks, aimed square at the side walls), and
+  **`BACK_SENSORS`** (reserved; earmarked for reverse/disposal assistance).
 
 ### 5.6 Decision thresholds (centimetres)
 
-| Setting | What it does |
-|---|---|
-| `FRONT_STOP_DISTANCE_CM` | **PRIMARY:** turn when the believed end wall is this close — a fixed, measured standoff. |
+| Setting                  | What it does                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `FRONT_STOP_DISTANCE_CM` | **PRIMARY:** turn when the believed end wall is this close — a fixed, measured standoff.       |
 | `FRONT_SLOW_DISTANCE_CM` | Slow to `SLOW_SPEED` when a wall/object is this close. **Must be > `FRONT_STOP_DISTANCE_CM`.** |
-| `RIGHT_WALL_DISTANCE_CM` | Right-side wall-present threshold (legacy wall-follow only). |
-| `RIGHT_TARGET_DISTANCE_CM` | Desired right-wall gap (legacy wall-follow only). |
 
 ### 5.7 Wall-detection fusion (reject blocks/bumps and misses)
 
 These gate when a close front reading is believed to be the **end wall** (see §1
 "Trusting the wall"):
 
-| Setting | What it does |
-|---|---|
-| `FRONT_AGREE_TOL_CM` | Front readings within this of each other count as "agreeing". |
-| `FRONT_AGREE_MIN_COUNT` | How many must agree (K). With 3 sensors, `2` = "the median is a real wall, not one stray sensor". |
-| `WALL_EXPECT_TOL_CM` | How far the odometry prior may disagree with the measured wall and still trust it. **Generous** (odometry is rough); too tight rejects real walls after drift, too loose lets a wide mid-lane object be called the lane end. |
-| `WALL_PERSIST_TICKS` | Consecutive ticks a close wall must hold before turning (kills single-frame glitches). |
-| `BRIDGE_MAX_S` | How long along-lane position may coast on odometry when the wall drops out. |
+| Setting                 | What it does                                                                                                                                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FRONT_AGREE_TOL_CM`    | Front readings within this of each other count as "agreeing".                                                                                                                                                                |
+| `FRONT_AGREE_MIN_COUNT` | How many must agree (K). With 3 sensors, `2` = "the median is a real wall, not one stray sensor".                                                                                                                            |
+| `WALL_EXPECT_TOL_CM`    | How far the odometry prior may disagree with the measured wall and still trust it. **Generous** (odometry is rough); too tight rejects real walls after drift, too loose lets a wide mid-lane object be called the lane end. |
+| `WALL_PERSIST_TICKS`    | Consecutive ticks a close wall must hold before turning (kills single-frame glitches).                                                                                                                                       |
+
+**Side-wall edge re-zero of `x`** (only active when the `left_*`/`right_*` sensors are
+enabled — no-op otherwise). In the outer lanes a side wall is close enough to trust,
+so `x` is re-anchored to it, correcting open-loop lane-shift drift:
+
+| Setting                 | What it does                                                                                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SIDE_WALL_TRUST_CM`    | Only trust a side wall nearer than this (i.e. an edge lane); farther walls (middle lanes) are ignored.                                                                                             |
+| `SIDE_EXPECT_TOL_CM`    | The measured `x` must be within this of the lane-counting prior, else it's treated as a block and ignored.                                                                                         |
+| `SIDE_SENSOR_OFFSET_CM` | Maps a wall **gap** to frame `x` (≈ half the car width). **Calibrate** so an edge lane's measured `x` matches its nominal `x`; `START_X_CM` / `PIT_X_CM` must be real distances in the same frame. |
 
 ### 5.8 Straight-line driving
 
-| Setting | What it does |
-|---|---|
-| `USE_WALL_FOLLOW` | `False` (default) = **IMU heading-hold**. `True` = legacy right-wall trim (needs the `right_*` sensors enabled). |
+| Setting             | What it does                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------- |
 | `HEADING_HOLD_GAIN` | Steer trim per degree of heading error. Too high = wobble; too low = slow to straighten. |
-| `MAX_HEADING_TRIM` | Clamp on the heading-hold trim. |
-| `STEER_CORRECTION_GAIN` / `MAX_STEER_TRIM` | Gain/clamp for the legacy wall-follow trim. |
+| `MAX_HEADING_TRIM`  | Clamp on the heading-hold trim.                                                          |
 
 ### 5.9 Sensor reliability
 
-| Setting | What it does |
-|---|---|
-| `SENSOR_MAX_RANGE_CM` / `SENSOR_MIN_RANGE_CM` | Readings outside this band are thrown out. |
-| `SENSOR_TIMEOUT_S` | Give up waiting for an echo after this long. |
-| `SENSOR_SAMPLES` | Median-of-N pings per read. Higher = steadier, slower. |
-| `SOUND_SPEED_CM_PER_S` | Speed of sound for echo→distance. Rarely changed. |
+| Setting                                       | What it does                                           |
+| --------------------------------------------- | ------------------------------------------------------ |
+| `SENSOR_MAX_RANGE_CM` / `SENSOR_MIN_RANGE_CM` | Readings outside this band are thrown out.             |
+| `SENSOR_TIMEOUT_S`                            | Give up waiting for an echo after this long.           |
+| `SENSOR_SAMPLES`                              | Median-of-N pings per read. Higher = steadier, slower. |
+| `SOUND_SPEED_CM_PER_S`                        | Speed of sound for echo→distance. Rarely changed.      |
 
 ### 5.10 Motion parameters
 
-| Setting | What it does | Range |
-|---|---|---|
-| `DRIVE_SPEED` | Normal forward speed. | 0..1 |
-| `SLOW_SPEED` | Speed when a wall is getting close. | 0..1 |
-| `TURN_SPEED` | In-place rotation speed (base for IMU and timed spins, and disposal orient). | 0..1 |
-| `TURN_TIME_S` | Seconds to spin 90° at `TURN_SPEED`. **Fallback only, no IMU.** | seconds |
+| Setting       | What it does                                                                 | Range   |
+| ------------- | ---------------------------------------------------------------------------- | ------- |
+| `DRIVE_SPEED` | Normal forward speed.                                                        | 0..1    |
+| `SLOW_SPEED`  | Speed when a wall is getting close.                                          | 0..1    |
+| `TURN_SPEED`  | In-place rotation speed (base for IMU and timed spins, and disposal orient). | 0..1    |
+| `TURN_TIME_S` | Seconds to spin 90° at `TURN_SPEED`. **Fallback only, no IMU.**              | seconds |
 
 ### 5.11 IMU turning (closed-loop)
 
-| Setting | What it does |
-|---|---|
-| `USE_IMU_TURN` | **Master switch.** `True` = measured-heading turns (auto-falls back to timed if the IMU is missing). Also gates whether the IMU is opened at all. |
-| `TURN_ANGLE_DEG` | Target rotation for one spin (90°). |
-| `IMU_TURN_TOLERANCE_DEG` | Stop this many degrees early for momentum. Raise if it overshoots. |
-| `IMU_TURN_TIMEOUT_S` | Safety cap — a spin never runs longer than this. |
-| `IMU_GLITCH_MAX_STEP_DEG` | Per-sample heading jumps bigger than this are ignored as corrupted reads. |
-| `IMU_TURN_POLL_S` | How often to re-read heading during a spin. |
-| `IMU_TURN_BOOST_AFTER_S` | Stall recovery: boost speed if under **half** turned by now. `None` disables. |
-| `IMU_TURN_BOOST_FACTOR` | Multiplier applied to `TURN_SPEED` on a stall (capped at 1.0). |
+| Setting                   | What it does                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `USE_IMU_TURN`            | **Master switch.** `True` = measured-heading turns (auto-falls back to timed if the IMU is missing). Also gates whether the IMU is opened at all. |
+| `TURN_ANGLE_DEG`          | Target rotation for one spin (90°).                                                                                                               |
+| `IMU_TURN_TOLERANCE_DEG`  | Stop this many degrees early for momentum. Raise if it overshoots.                                                                                |
+| `IMU_TURN_TIMEOUT_S`      | Safety cap — a spin never runs longer than this.                                                                                                  |
+| `IMU_GLITCH_MAX_STEP_DEG` | Per-sample heading jumps bigger than this are ignored as corrupted reads.                                                                         |
+| `IMU_TURN_POLL_S`         | How often to re-read heading during a spin.                                                                                                       |
+| `IMU_TURN_BOOST_AFTER_S`  | Stall recovery: boost speed if under **half** turned by now. `None` disables.                                                                     |
+| `IMU_TURN_BOOST_FACTOR`   | Multiplier applied to `TURN_SPEED` on a stall (capped at 1.0).                                                                                    |
 
 ### 5.12 Motors (`MOTORS` dict)
 
@@ -365,10 +378,10 @@ Each side is `name: {"dir": <pin>, "pwm": <pin>, "invert": <bool>}` in BCM.
 
 ### 5.13 Control loop & bring-up
 
-| Setting | What it does |
-|---|---|
-| `CONTROL_LOOP_HZ` | How often the car reads + decides (≈20 Hz). Also sets the `dt` used for bridging. |
-| `USE_SENSORS` | `False` = drive test, `True` = full navigation. |
+| Setting               | What it does                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------ |
+| `CONTROL_LOOP_HZ`     | How often the car reads + decides (≈20 Hz). Also sets the `dt` used for bridging.                      |
+| `USE_SENSORS`         | `False` = drive test, `True` = full navigation.                                                        |
 | `DRIVE_TEST_SEQUENCE` | Scripted `(action, seconds)` maneuver for drive-test mode: `"forward"`, `"left"`, `"right"`, `"stop"`. |
 
 ---
@@ -376,19 +389,20 @@ Each side is `name: {"dir": <pin>, "pwm": <pin>, "invert": <bool>}` in BCM.
 ## 6. Logging — what the car tells you
 
 At startup, navigation prints a **banner**: arena size, start pose, pit location,
-collection capacity, driving mode (heading-hold vs wall-follow), turn mode, and
+collection capacity, driving mode (IMU heading-hold), turn mode, and
 whether real sensor hardware was found.
 
 Then **every control tick** it prints one status line:
 
 ```
-MODE=DRIVING   | pos=(  35.0, 156.0) hdg=-180.0 tgt=-180.0 lane#1 ld=144.0 src=WALL   wall=144.0(x3) | front_left=144.0 ... | yaw= -179.8 | blocks=0/10 | -> FORWARD    (cruising)
+MODE=DRIVING   | pos=(  35.0, 156.0) hdg=-180.0 tgt=-180.0 lane#1 ld=144.0 y_src=WALL   x_src=LANE wall=144.0(x3) | front_left=144.0 ... | yaw= -179.8 | blocks=0/10 | -> FORWARD    (cruising)
 ```
 
 - **MODE** — DRIVING / TURNING / DISPOSING.
 - **pos / hdg / tgt** — estimated position, current & target heading.
 - **lane# / ld** — lane index (→ cross-lane `x`) and along-lane distance.
-- **src** — where along-lane position came from: `WALL` (believed wall) or `BRIDGE` (odometry).
+- **y_src** — where along-lane `y` came from: `WALL` (believed wall) or `BRIDGE` (odometry).
+- **x_src** — where cross-lane `x` came from: `WALL` (re-zeroed off a side wall) or `LANE` (lane counting).
 - **wall=NN(xK)** — believed wall distance and how many front sensors agreed (`--` = none).
 - **sensors** — every raw ultrasonic distance (`--` = no echo / out of range).
 - **yaw** — raw IMU heading (`--` if no IMU this tick). **blocks** — collector count / capacity.
@@ -401,19 +415,19 @@ The U-turn and disposal maneuvers add their own `[u-turn] ...`, `[orient] ...`,
 
 ## 7. Files
 
-| File | Purpose |
-|---|---|
-| `config.py` | **All** tunable values. Change behaviour here, never in the logic. |
-| `main.py` | Control loop, U-turn / spin (IMU + stall boost), disposal maneuver, status logging. |
-| `navigation.py` | Pure state machine: `decide(readings, yaw, dt) → Command`, wall-referenced pose + fusion, modes. No hardware. |
-| `actuators.py` | **Placeholders** for the future servos: `Collector` (block count/capacity) + `Disposer` (`dump()`). Log-only for now. |
-| `sensors.py` | HC-SR04 driver. Real sensors on a Pi; `inf`/simulator elsewhere. |
-| `motors.py` | Tank / skid-steer driver (DIR + PWM per side). Prints intent off-Pi. |
-| `imu.py` | BNO086 IMU wrapper; provides `yaw()`. Disabled cleanly if absent. |
-| `simulate.py` | Time-stepped off-hardware run (synthesizes wall readings): wall-referenced cruise → wall turn → dispose. |
-| `test_navigation.py` | Unit tests for every branch of the decision logic. |
-| `sensor_test.py` / `sensor_diagnostics.py` | Wiring / per-sensor debug helpers. |
-| `imu_turn_test.py` | One-shot IMU spin test. |
+| File                                       | Purpose                                                                                                               |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `config.py`                                | **All** tunable values. Change behaviour here, never in the logic.                                                    |
+| `main.py`                                  | Control loop, U-turn / spin (IMU + stall boost), disposal maneuver, status logging.                                   |
+| `navigation.py`                            | Pure state machine: `decide(readings, yaw, dt) → Command`, wall-referenced pose + fusion, modes. No hardware.         |
+| `actuators.py`                             | **Placeholders** for the future servos: `Collector` (block count/capacity) + `Disposer` (`dump()`). Log-only for now. |
+| `sensors.py`                               | HC-SR04 driver. Real sensors on a Pi; `inf`/simulator elsewhere.                                                      |
+| `motors.py`                                | Tank / skid-steer driver (DIR + PWM per side). Prints intent off-Pi.                                                  |
+| `imu.py`                                   | BNO086 IMU wrapper; provides `yaw()`. Disabled cleanly if absent.                                                     |
+| `simulate.py`                              | Time-stepped off-hardware run (synthesizes wall readings): wall-referenced cruise → wall turn → dispose.              |
+| `test_navigation.py`                       | Unit tests for every branch of the decision logic.                                                                    |
+| `sensor_test.py` / `sensor_diagnostics.py` | Wiring / per-sensor debug helpers.                                                                                    |
+| `imu_turn_test.py`                         | One-shot IMU spin test.                                                                                               |
 
 ### Where the servos plug in (later)
 
@@ -425,32 +439,18 @@ The U-turn and disposal maneuvers add their own `[u-turn] ...`, `[orient] ...`,
 
 ---
 
-## 8. Gotchas & not-yet-implemented
+## 8. Calibration — measure/tune these on the real car
 
-- **Sensor mounting is now the thing that matters most.** Position depends on the
-  front sensors seeing the walls. They must be **level, above block height, spread
-  edge-to-edge and outboard of the bucket**, aimed square at the walls. A sensor
-  pointed at the floor, or looking into its own bucket, breaks the wall reference no
-  matter how good the code is (§1 "Trusting the wall"). Verify on the bench: on a
-  flat surface all three should agree; wave a small object in front of one and it
-  should **not** trigger a turn.
-- **Specular miss.** Ultrasonics off a smooth wall at an angle bounce away. IMU
-  heading-hold keeps the car square (good returns); when the car does yaw on a bump
-  and the wall drops out, position **bridges** on odometry for `BRIDGE_MAX_S` until
-  it re-appears. Long bridges over a very bumpy floor still drift — that's what the
-  odometry backstop and a generous `PIT_ARRIVAL_RADIUS_CM` are for.
-- **Heading sign convention.** The code assumes **`turn_right` = +90° yaw** and that
-  the car steps `+x` on its first turn. If your BNO086 yaw runs the other way, the
-  first U-turn walks the wrong way and the back-to-pit orient is mirrored. Verify on
-  the bench (§4 step 3); quick workaround: flip `SERPENTINE_FIRST_TURN`.
-- **Coverage assumes a clean lane count.** DONE fires after `NUM_LANES` lanes; if
-  the arena width isn't a tidy multiple of `LANE_WIDTH_CM`, or lanes drift, the last
-  strip may be partially covered or the car may stop a little early/late. Tune
-  `NUM_LANES` / `LANE_WIDTH_CM` for your arena.
-- **Closed-loop lane shift.** The sideways shift is still open-loop timed
-  (`LANE_WIDTH_CM / DRIVE_CM_PER_S`); only the *turns* are closed-loop (IMU). Cross-
-  lane `x` comes from lane-counting, so a slightly-off shift doesn't corrupt `x`,
-  but a badly-off shift means the physical lane isn't where `x` says.
-- **Left-side sensors** — add them to `config.SENSORS` and use them in
-  `navigation.py` if you want to cross-check `x` against the side walls in edge lanes.
+| Setting | How to set it |
+|---|---|
+| `FULL_SPEED_CM_PER_S` | Drive at `DRIVE_SPEED` for a known time; `cm/s ÷ DRIVE_SPEED`. Err **high** — under-reading can overshoot a lane end with no wall. |
+| `DISPOSE_REVERSE_CM` | Tune at the pit so the rear **overhangs but the drive wheels stay on the edge** (no rear sensor — this one can drop a wheel in). |
+| `SERPENTINE_FIRST_TURN` | Bench-check a right turn steps the car `+x` (into the arena); flip it if your IMU yaw runs the other way. |
+| `PIT_ARRIVAL_RADIUS_CM` | Keep **≥ `FRONT_STOP_DISTANCE_CM`**, or the car never reaches the pit. |
+| `SIDE_SENSOR_OFFSET_CM` | Only if you enable the side sensors: ≈ half the car width; set so an edge lane's measured `x` matches its nominal `x`. |
+
+_Not yet implemented: the servos (`Collector`/`Disposer` are log-only — disposal fires on pit arrival, not "bucket full"), and the sideways lane shift is still open-loop timed._
+
+```
+
 ```

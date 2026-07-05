@@ -200,13 +200,18 @@ def _dispose(motors, cfg, imu, nav, disposer, face_heading=None):
     print("[dispose] done, resuming sweep")
 
 
-def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading):
-    """Turn to `target_heading`, then drive (slow, heading-held) up to a wall.
+def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading,
+                   stop_distance=None):
+    """Turn to `target_heading`, then drive (slow, heading-held) toward a wall.
 
-    Stops when a believed front wall is within the standoff, or a safety timeout
-    (~2 arena lengths) elapses so it can never drive forever. Wall-referenced, so
-    it lands at a consistent standoff regardless of how far it had to go.
+    Stops when a believed front wall is within `stop_distance` (default the normal
+    FRONT_STOP standoff), or a safety timeout (~2 arena lengths) elapses so it can
+    never drive forever. Wall-referenced, so it lands at a consistent gap regardless
+    of how far it had to go -- pass a larger stop_distance to stop the car at a known
+    distance FROM a wall (e.g. to reach the pit's middle off the far side wall).
     """
+    if stop_distance is None:
+        stop_distance = cfg.FRONT_STOP_DISTANCE_CM
     _spin_to_heading(motors, cfg, imu, nav, target_heading)
     nav.target_heading = target_heading
     cm_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED) if cfg.DRIVE_SPEED else 0.0
@@ -214,7 +219,7 @@ def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading):
     while time.time() < deadline:
         readings = sensors.read_all()
         front, agree = nav.front_wall(readings)
-        if agree >= cfg.FRONT_AGREE_MIN_COUNT and front <= cfg.FRONT_STOP_DISTANCE_CM:
+        if agree >= cfg.FRONT_AGREE_MIN_COUNT and front <= stop_distance:
             break
         cur = nav.rel_heading(imu.yaw() if imu is not None else None)
         steer = 0.0
@@ -242,15 +247,14 @@ def _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
     print("[return] leg 1: drive to the start wall (the pit's side)")
     _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=180.0)
 
-    # 2) To the pit's middle, measured from the left wall. heading -90 = -x.
-    print("[return] leg 2: reference the left wall, then measure across to the middle")
+    # 2) To the pit's middle -- fully front-wall-referenced (no odometry):
+    #    go to the left wall, then face +x and drive until the FAR (right) wall is
+    #    (WIDTH - PIT_X) away, which puts the car at x = PIT_X.
+    print("[return] leg 2a: drive to the left wall")
     _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
-    across = cfg.PIT_X_CM - cfg.FRONT_STOP_DISTANCE_CM  # left-wall standoff ~ car x
-    if across > 0:
-        _spin_to_heading(motors, cfg, imu, nav, 90.0)     # face +x
-        nav.target_heading = 90.0
-        secs = _drive_distance(motors, cfg, across, cfg.SLOW_SPEED)
-        print(f"[return] moved {across:.0f}cm from the left wall to the pit's middle ({secs:.2f}s)")
+    print("[return] leg 2b: face +x, drive until the right wall marks the pit's middle")
+    _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=90.0,
+                   stop_distance=cfg.ARENA_WIDTH_CM - cfg.PIT_X_CM)
 
     # 3) Final dump: face +y so the BACK points at the start-wall pit, reverse in.
     print("[return] leg 3: final dump into the pit")
@@ -324,7 +328,7 @@ def run_navigation(motors, cfg, imu=None):
 
     turn_mode = "IMU heading" if (imu is not None and imu.available
                                   and cfg.USE_IMU_TURN) else f"timed {cfg.TURN_TIME_S}s"
-    drive_mode = "wall-follow" if cfg.USE_WALL_FOLLOW else "IMU heading-hold"
+    drive_mode = "IMU heading-hold"
     print("=" * 78)
     print("USE_SENSORS = True -> IMU + wall-referenced navigation with disposal")
     print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm, "

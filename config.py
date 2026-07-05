@@ -21,14 +21,9 @@ LANE_WIDTH_CM = 35.0
 # lanes than the plain division gives (e.g. partial coverage, or extra overlap).
 NUM_LANES = math.ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)   # e.g. 210 / 35 = 6
 
-# Measured forward travel speed at DRIVE_SPEED, in cm/s. NOTE: position is now
-# wall-referenced (front sensors), so this is only a FALLBACK/BRIDGE value:
-#   * it bridges along-lane position for the brief ticks the wall isn't seen,
-#   * it provides the rough "where should the wall be" prior (WALL_EXPECT_TOL_CM),
-#   * it times the LANE_WIDTH sideways shift inside the U-turn.
-# None of these need high accuracy (they tolerate wheel slip on bumps), but a
-# roughly-right value still helps. Measure it once and move on.
-DRIVE_CM_PER_S = 30.0
+# Forward travel speed (cm/s) is CALIBRATED and DERIVED near the motion parameters
+# below (FULL_SPEED_CM_PER_S -> DRIVE_CM_PER_S), so it tracks DRIVE_SPEED instead of
+# being a separate hardcoded number. See that section.
 
 # ---------------------------------------------------------------------------
 # Start pose and coordinate frame.
@@ -58,7 +53,12 @@ SERPENTINE_FIRST_TURN = "right"     # "right" from bottom-left, "left" from bott
 # ---------------------------------------------------------------------------
 PIT_X_CM = ARENA_WIDTH_CM / 2.0     # pit centre X: middle of the start wall (TODO: confirm)
 PIT_Y_CM = 0.0                      # pit centre Y: on the start wall (y=0) (TODO: confirm)
-PIT_ARRIVAL_RADIUS_CM = 30.0        # how close (cm) to the pit centre counts as "arrived"
+# How close (cm) to the pit centre counts as "arrived". The pit is ON the start
+# wall, and the car can't approach a wall closer than FRONT_STOP_DISTANCE_CM, so
+# this MUST be >= FRONT_STOP_DISTANCE_CM or the end-of-lane turn fires first and the
+# car never disposes. Disposal is also gated to the pit's own lane, so a generous
+# radius can't false-trigger on a neighbouring lane.
+PIT_ARRIVAL_RADIUS_CM = 50.0
 DISPOSE_BACK_INTO_PIT = True        # True = orient the back toward the pit before reversing
 # How far to reverse (after orienting) to place the rear directly over the small
 # pit, and how fast. TUNE on the real setup so the rear OVERHANGS the pit but the
@@ -79,34 +79,52 @@ COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes fr
 
 # ---------------------------------------------------------------------------
 # Ultrasonic sensor layout.
-#   5x HC-SR04: 3 facing forward, 2 facing right.
+#   9x HC-SR04 positions: 3 front, 2 right, 2 left, 2 back.
 #   Each entry: logical name -> {TRIG pin, ECHO pin, enabled} in BCM numbering.
 #   Adjust the pin numbers to match your wiring.
 #   "enabled": False -> that sensor is never read (its GPIO is left untouched)
 #   and its distance always reports as "no echo". Use it to bring sensors up one
 #   at a time, or to ignore one that isn't wired / is faulty.
 #
+#   FOR NOW ONLY THE 3 FRONT SENSORS ARE ENABLED. The side/back positions are
+#   wired into config (pins reserved) but switched off; flip "enabled": True as
+#   you bring them up. The nav logic only reads the FRONT sensors today, so the
+#   others are inert until code uses their groupings (back sensors are earmarked
+#   for future reverse/disposal assistance).
+#
 #   The 3 FRONT sensors are the PRIMARY position reference (distance to the end
 #   wall = how far down the lane we are). Mount them:
 #     * spread edge-to-edge across the front (left-edge / center / right-edge) and
 #       OUTBOARD of the collection bucket, so no sensor stares into its own scoop
 #       and the outer pair gives a wide "is it a full wall or just a block?" baseline,
-#     * LEVEL and ABOVE block height, aimed straight ahead, so a flat wall reflects
-#       cleanly and low blocks/bumps are not seen.
+#     * LEVEL, aimed straight ahead, and at a height ABOVE the blocks but BELOW the
+#       top of the arena walls -- high enough that low blocks/bumps are not seen, but
+#       not so high the beam shoots over a low wall and misses it.
 # ---------------------------------------------------------------------------
-# NOTE: pins 12, 13, 16, 20 are used by the motors (see MOTORS below), so the
-# sensors are wired clear of them. Change these to match your actual wiring.
+# NOTE: pins 12, 13, 16, 20 are used by the motors (see MOTORS below) and 2, 3 by
+# the IMU's I2C, so the sensors are wired clear of them. Every ENABLED sensor must
+# have unique trig/echo pins. Change all of these to match your actual wiring.
 SENSORS = {
-    "front_left":   {"trig": 23, "echo": 24, "enabled": True},  # left edge, outboard of bucket
-    "front_center": {"trig": 27,  "echo": 22, "enabled": True},  # centre
-    "front_right":  {"trig": 6, "echo": 5, "enabled": True},  # right edge, outboard of bucket
-    "right_front":  {"trig": 17, "echo": 4, "enabled": False},  # right, toward front
-    "right_rear":   {"trig": 22, "echo": 25, "enabled": False},  # right, toward rear
+    # Front -- ENABLED (primary position reference).
+    "front_left":   {"trig": 23, "echo": 24, "enabled": True},   # left edge, outboard of bucket
+    "front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
+    "front_right":  {"trig": 6,  "echo": 5,  "enabled": True},   # right edge, outboard of bucket
+    # Right side -- disabled for now.
+    "right_front":  {"trig": 17, "echo": 4,  "enabled": False},  # right, toward front
+    "right_rear":   {"trig": 26, "echo": 25, "enabled": False},  # right, toward rear (trig was 22: clashed with front_center echo)
+    # Left side -- disabled for now.
+    "left_front":   {"trig": 19, "echo": 21, "enabled": False},  # left, toward front
+    "left_rear":    {"trig": 7,  "echo": 8,  "enabled": False},  # left, toward rear
+    # Back -- disabled for now (future: reverse / disposal assistance).
+    "back_left":    {"trig": 1,  "echo": 25, "enabled": False},  # back, left
+    "back_right":   {"trig": 7, "echo": 8, "enabled": False},  # back, right
 }
 
 # Logical groupings used by the navigation logic.
 FRONT_SENSORS = ("front_left", "front_center", "front_right")
 RIGHT_SENSORS = ("right_front", "right_rear")
+LEFT_SENSORS = ("left_front", "left_rear")
+BACK_SENSORS = ("back_left", "back_right")
 
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
@@ -119,8 +137,6 @@ RIGHT_SENSORS = ("right_front", "right_rear")
 FRONT_STOP_DISTANCE_CM = 40.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
 FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
 # NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
-RIGHT_WALL_DISTANCE_CM = 25.0    # closer than this => a wall is present on the right
-RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall (only used if USE_WALL_FOLLOW)
 
 # ---------------------------------------------------------------------------
 # Wall-detection fusion (reject blocks/bumps and angled misses).
@@ -133,13 +149,33 @@ RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall (only used if U
 #     * the above holds for WALL_PERSIST_TICKS consecutive ticks (rejects a
 #       single-frame glitch).
 #   If the front wall momentarily drops out (angled/specular miss), along-lane
-#   position coasts on odometry for up to BRIDGE_MAX_S until the wall re-appears.
+#   position coasts on odometry until the wall re-appears; the odometry backstop
+#   (LANE_END_MARGIN_CM) still ends the lane if the wall is never seen.
 # ---------------------------------------------------------------------------
 FRONT_AGREE_TOL_CM = 15.0        # front readings within this of each other "agree"
 FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
 WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
 WALL_PERSIST_TICKS = 3           # consecutive ticks the wall-stop must hold before turning
-BRIDGE_MAX_S = 2.0               # max time to coast on odometry when the wall drops out
+
+# ---------------------------------------------------------------------------
+# Side-wall cross-lane (x) correction -- EDGE RE-ZERO.
+#   Cross-lane x normally comes from lane counting (open-loop: it assumes each
+#   U-turn shifted exactly LANE_WIDTH). In the OUTER lanes a side wall is close
+#   enough to measure reliably, so when BOTH sensors on the nearer side agree and
+#   read within SIDE_WALL_TRUST_CM, the car re-zeros x to that wall -- correcting
+#   accumulated lane-shift drift. Ignored in middle lanes (wall too far) and if
+#   the reading disagrees with the lane-counting prior by more than
+#   SIDE_EXPECT_TOL_CM (rejects a block). NO-OP while the side sensors are disabled.
+# ---------------------------------------------------------------------------
+SIDE_WALL_TRUST_CM = 70.0        # only trust a side wall nearer than this (i.e. an edge lane)
+SIDE_EXPECT_TOL_CM = 25.0        # measured x must be within this of the lane-counting prior
+# Maps a measured wall GAP to the frame's x: measured_x = gap + this (left wall),
+# or ARENA_WIDTH - gap - this (right wall). It's the distance from the car's x
+# reference point to its side sensor face -- about half the car width. CALIBRATE so
+# that in an edge lane the measured x matches that lane's nominal (lane# * LANE_WIDTH
+# + START_X); START_X_CM / PIT_X_CM must be in the same physical frame for the
+# re-zero to be consistent. Only matters once the side sensors are enabled.
+SIDE_SENSOR_OFFSET_CM = ROBOT_WIDTH_CM / 2.0
 
 # ---------------------------------------------------------------------------
 # Sensor reliability / read settings.
@@ -153,20 +189,32 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # ---------------------------------------------------------------------------
 # Motion parameters.
 # ---------------------------------------------------------------------------
-DRIVE_SPEED = 0.6                # nominal forward speed (0..1)
-SLOW_SPEED = 0.4                 # forward speed when an obstacle is getting close
+DRIVE_SPEED = 0.3                # nominal forward speed (0..1 duty)
+SLOW_SPEED = 0.2                 # forward speed when an obstacle is getting close
 TURN_SPEED = 0.2                 # in-place rotation speed
-STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall (wall-follow only)
-MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
+
+# Physical speed calibration -- the ONE thing to measure. FULL_SPEED_CM_PER_S is how
+# fast the car actually travels at full duty (speed 1.0), in cm/s. The odometry cm/s
+# at any commanded duty is FULL_SPEED_CM_PER_S * duty (the model already assumes speed
+# is ~proportional to duty), so DRIVE_CM_PER_S is DERIVED from DRIVE_SPEED below and
+# tracks it automatically -- change DRIVE_SPEED and the distance estimate follows, no
+# separate re-measure. To calibrate: drive at DRIVE_SPEED for a known time, cm/s =
+# distance/time, then FULL_SPEED_CM_PER_S = that / DRIVE_SPEED.
+FULL_SPEED_CM_PER_S = 50.0       # e.g. 30 cm/s at DRIVE_SPEED 0.6 -> 30 / 0.6 = 50
+
+# cm/s at the normal cruise speed. DERIVED (not hardcoded). It is only a fallback/
+# bridge value now that position is wall-referenced: it bridges along-lane position
+# for the brief ticks a wall isn't seen, gives the rough "where should the wall be"
+# prior (WALL_EXPECT_TOL_CM), and times the LANE_WIDTH sideways shift in the U-turn.
+DRIVE_CM_PER_S = FULL_SPEED_CM_PER_S * DRIVE_SPEED
 
 # ---------------------------------------------------------------------------
-# Straight-line driving: IMU heading-hold (primary) vs right-wall follow (legacy).
+# Straight-line driving: IMU heading-hold.
 #   While DRIVING, the car cruises forward and trims its steering to hold the
-#   lane's target heading using the IMU, instead of following the right wall.
-#   HEADING_HOLD_GAIN turns a heading error (deg) into a steer trim; the result
-#   is clamped to +/-MAX_HEADING_TRIM. Positive steer = toward the car's right.
+#   lane's target heading using the IMU. HEADING_HOLD_GAIN turns a heading error
+#   (deg) into a steer trim, clamped to +/-MAX_HEADING_TRIM. Positive steer =
+#   toward the car's right. (With no IMU, the trim is 0 -> open-loop straight.)
 # ---------------------------------------------------------------------------
-USE_WALL_FOLLOW = False           # False = IMU heading-hold (default), True = legacy right-wall trim
 HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
 MAX_HEADING_TRIM = 0.4            # clamp on the heading-hold steering trim
 
