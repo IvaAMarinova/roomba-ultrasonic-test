@@ -1,3 +1,5 @@
+import math
+
 # ---------------------------------------------------------------------------
 # Arena geometry (known and fixed for the competition).
 # ---------------------------------------------------------------------------
@@ -12,11 +14,20 @@ ROBOT_WIDTH_CM = 50.0         # physical width of the car
 # once it exceeds the car width).
 LANE_WIDTH_CM = 35.0
 
-# Measured forward travel speed at DRIVE_SPEED, in cm/s. Used both to convert the
-# lane-width shift into an open-loop drive time AND for dead-reckoning odometry
-# (distance-along-lane = DRIVE_CM_PER_S * time). MEASURE THIS ACCURATELY on the
-# real car (drive forward at DRIVE_SPEED for a known time, divide distance by
-# time) -- odometry-based turning and pit arrival both depend on it.
+# How many lanes make up a full sweep of the arena = how wide the arena is
+# divided by how far we step each lane (rounded UP so the far edge is covered).
+# The car counts lanes as it goes and STOPS once it has finished lane NUM_LANES-1
+# (coverage complete). Override the number here if you want to sweep fewer/more
+# lanes than the plain division gives (e.g. partial coverage, or extra overlap).
+NUM_LANES = math.ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)   # e.g. 210 / 35 = 6
+
+# Measured forward travel speed at DRIVE_SPEED, in cm/s. NOTE: position is now
+# wall-referenced (front sensors), so this is only a FALLBACK/BRIDGE value:
+#   * it bridges along-lane position for the brief ticks the wall isn't seen,
+#   * it provides the rough "where should the wall be" prior (WALL_EXPECT_TOL_CM),
+#   * it times the LANE_WIDTH sideways shift inside the U-turn.
+# None of these need high accuracy (they tolerate wheel slip on bumps), but a
+# roughly-right value still helps. Measure it once and move on.
 DRIVE_CM_PER_S = 30.0
 
 # ---------------------------------------------------------------------------
@@ -37,16 +48,24 @@ START_Y_CM = 0.0                    # bottom-left corner, start wall
 SERPENTINE_FIRST_TURN = "right"     # "right" from bottom-left, "left" from bottom-right
 
 # ---------------------------------------------------------------------------
-# Disposal pit (known fixed location, in the start-relative frame above).
-#   The car sweeps the arena and, when its pose comes within
-#   PIT_ARRIVAL_RADIUS_CM of (PIT_X_CM, PIT_Y_CM), it enters DISPOSING: it
-#   rotates so its BACK faces the pit (waste-truck style) and dumps.
+# Disposal pit -- in the MIDDLE of the start wall (y=0), known fixed location.
+#   The pit is SMALL (about the size of the car), so we position the car's REAR
+#   directly over it: turn so the back faces the pit, REVERSE DISPOSE_REVERSE_CM
+#   to seat the rear over it, dump (waste-truck style), pull forward off it.
+#   The sweep passes the pit ONCE (it's on the start wall), and after the whole
+#   arena is swept the car returns here for a final dump (see main._return_to_pit).
 #   SET THESE to the real pit location for the competition arena.
 # ---------------------------------------------------------------------------
-PIT_X_CM = ARENA_WIDTH_CM / 2.0     # TODO: real pit centre X (placeholder: arena middle)
-PIT_Y_CM = ARENA_LENGTH_CM          # TODO: real pit centre Y (placeholder: far wall)
+PIT_X_CM = ARENA_WIDTH_CM / 2.0     # pit centre X: middle of the start wall (TODO: confirm)
+PIT_Y_CM = 0.0                      # pit centre Y: on the start wall (y=0) (TODO: confirm)
 PIT_ARRIVAL_RADIUS_CM = 30.0        # how close (cm) to the pit centre counts as "arrived"
-DISPOSE_BACK_INTO_PIT = True        # True = orient back toward the pit before dumping
+DISPOSE_BACK_INTO_PIT = True        # True = orient the back toward the pit before reversing
+# How far to reverse (after orienting) to place the rear directly over the small
+# pit, and how fast. TUNE on the real setup so the rear OVERHANGS the pit but the
+# drive wheels stay on the edge (the pit is roughly car-sized). The car pulls the
+# same distance forward again after dumping to get clear before resuming.
+DISPOSE_REVERSE_CM = 20.0
+DISPOSE_REVERSE_SPEED = 0.3         # slow, for precise placement (0..1)
 DISPOSE_HOLD_S = 2.0                # placeholder dwell while "dumping" (until servo lands)
 
 # ---------------------------------------------------------------------------
@@ -66,13 +85,21 @@ COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes fr
 #   "enabled": False -> that sensor is never read (its GPIO is left untouched)
 #   and its distance always reports as "no echo". Use it to bring sensors up one
 #   at a time, or to ignore one that isn't wired / is faulty.
+#
+#   The 3 FRONT sensors are the PRIMARY position reference (distance to the end
+#   wall = how far down the lane we are). Mount them:
+#     * spread edge-to-edge across the front (left-edge / center / right-edge) and
+#       OUTBOARD of the collection bucket, so no sensor stares into its own scoop
+#       and the outer pair gives a wide "is it a full wall or just a block?" baseline,
+#     * LEVEL and ABOVE block height, aimed straight ahead, so a flat wall reflects
+#       cleanly and low blocks/bumps are not seen.
 # ---------------------------------------------------------------------------
 # NOTE: pins 12, 13, 16, 20 are used by the motors (see MOTORS below), so the
 # sensors are wired clear of them. Change these to match your actual wiring.
 SENSORS = {
-    "front_left":   {"trig": 23, "echo": 24, "enabled": True},
-    "front_center": {"trig": 27,  "echo": 22, "enabled": True},
-    "front_right":  {"trig": 6, "echo": 5, "enabled": True},
+    "front_left":   {"trig": 23, "echo": 24, "enabled": True},  # left edge, outboard of bucket
+    "front_center": {"trig": 27,  "echo": 22, "enabled": True},  # centre
+    "front_right":  {"trig": 6, "echo": 5, "enabled": True},  # right edge, outboard of bucket
     "right_front":  {"trig": 17, "echo": 4, "enabled": False},  # right, toward front
     "right_rear":   {"trig": 22, "echo": 25, "enabled": False},  # right, toward rear
 }
@@ -83,16 +110,36 @@ RIGHT_SENSORS = ("right_front", "right_rear")
 
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
-#   End-of-lane is now decided by ODOMETRY (distance driven vs ARENA_LENGTH_CM,
-#   see LANE_END_MARGIN_CM below). The FRONT_* ultrasonic thresholds are the
-#   SAFETY FALLBACK: if a wall shows up closer than expected (odometry drift, an
-#   unexpected obstacle) they force the turn early so we never drive into it.
+#   End-of-lane is decided PRIMARILY by the front wall: we turn when the car is a
+#   fixed standoff (FRONT_STOP_DISTANCE_CM) from the end wall. This is a real
+#   measured gap, so the standoff stays consistent even when wheel slip on bumps
+#   throws off the time-based estimate. Odometry is only the backstop (used if all
+#   front sensors drop out -- see LANE_END_MARGIN_CM).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 40.0    # FALLBACK: wall this close ahead -> turn now, even if odometry disagrees
+FRONT_STOP_DISTANCE_CM = 40.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
 FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
 # NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
 RIGHT_WALL_DISTANCE_CM = 25.0    # closer than this => a wall is present on the right
 RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall (only used if USE_WALL_FOLLOW)
+
+# ---------------------------------------------------------------------------
+# Wall-detection fusion (reject blocks/bumps and angled misses).
+#   A close front reading is only believed to be the END WALL when:
+#     * at least FRONT_AGREE_MIN_COUNT of the enabled front sensors agree within
+#       FRONT_AGREE_TOL_CM of each other (a narrow block can't fool the wide,
+#       edge-to-edge spread -- a real wall is seen the same by all), AND
+#     * odometry says we are within WALL_EXPECT_TOL_CM of where the end wall is
+#       expected (rejects a mid-lane object being called the lane end), AND
+#     * the above holds for WALL_PERSIST_TICKS consecutive ticks (rejects a
+#       single-frame glitch).
+#   If the front wall momentarily drops out (angled/specular miss), along-lane
+#   position coasts on odometry for up to BRIDGE_MAX_S until the wall re-appears.
+# ---------------------------------------------------------------------------
+FRONT_AGREE_TOL_CM = 15.0        # front readings within this of each other "agree"
+FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
+WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
+WALL_PERSIST_TICKS = 3           # consecutive ticks the wall-stop must hold before turning
+BRIDGE_MAX_S = 2.0               # max time to coast on odometry when the wall drops out
 
 # ---------------------------------------------------------------------------
 # Sensor reliability / read settings.
@@ -124,12 +171,13 @@ HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
 MAX_HEADING_TRIM = 0.4            # clamp on the heading-hold steering trim
 
 # ---------------------------------------------------------------------------
-# Odometry-based end-of-lane.
-#   Distance driven down the current lane is integrated from DRIVE_CM_PER_S; once
-#   it reaches ARENA_LENGTH_CM - LANE_END_MARGIN_CM the car turns (the ultrasonic
-#   front stop is only a fallback for when a wall appears sooner than expected).
+# Odometry end-of-lane BACKSTOP.
+#   Only used if the front sensors give no agreed wall reading at all (total
+#   dropout): once dead-reckoned lane distance reaches ARENA_LENGTH_CM -
+#   LANE_END_MARGIN_CM the car turns anyway, so it can never run forever blind.
+#   In normal operation the wall trigger (above) fires first.
 # ---------------------------------------------------------------------------
-LANE_END_MARGIN_CM = 40.0         # turn this far before the far wall (odometry trigger)
+LANE_END_MARGIN_CM = 40.0         # backstop: turn this far before the far wall if the wall is never seen
 
 # Seconds to rotate 90 degrees in place at TURN_SPEED. Used as the FALLBACK when
 # no IMU is available (see USE_IMU_TURN below). Measure it on the actual car.

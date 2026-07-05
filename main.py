@@ -148,23 +148,114 @@ def _u_turn(motors, cfg, direction, imu, nav):
     print(f"    [u-turn] done, resuming sweep ({nav.pose_str()})")
 
 
-def _dispose(motors, cfg, imu, nav, disposer):
-    """Disposal maneuver: point the car's BACK at the pit, then dump.
+def _drive_distance(motors, cfg, distance_cm, speed):
+    """Drive straight for a fixed distance (cm) at `speed` (signed: <0 = reverse).
 
-    Servo actuation lands later (see actuators.Disposer); for now it orients,
-    holds, and logs the dump. Afterwards nav.complete_dispose() empties the
-    (stub) bucket and returns to DRIVING.
+    Open-loop timed off DRIVE_CM_PER_S (measured at DRIVE_SPEED). Short move, so
+    the timing is good enough even on a bumpy floor.
+    """
+    cm_per_s = cfg.DRIVE_CM_PER_S * (abs(speed) / cfg.DRIVE_SPEED)
+    seconds = distance_cm / cm_per_s if cm_per_s > 0 else 0.0
+    motors.drive(speed, 0.0)
+    time.sleep(seconds)
+    motors.stop()
+    return seconds
+
+
+def _dispose(motors, cfg, imu, nav, disposer, face_heading=None):
+    """Disposal maneuver for a SMALL (car-sized) pit: seat the rear over it, dump.
+
+      1. Turn so the car's BACK faces the pit.
+      2. Reverse DISPOSE_REVERSE_CM to place the rear directly over the pit.
+      3. Dump (placeholder until the disposal servo lands -- see actuators.Disposer).
+      4. Pull the same distance forward to get clear of the pit.
+      5. Re-orient to the lane heading so the sweep resumes cleanly.
+
+    face_heading: the heading to face so the back points at the pit. If None (the
+    normal in-sweep pass) it is computed from the live pose (nav.bearing_to_pit).
+    The final return-to-pit dump passes it explicitly, because after the blocking
+    return legs the pose estimate is stale. Afterwards nav.complete_dispose()
+    empties the (stub) bucket and returns to DRIVING.
     """
     if cfg.DISPOSE_BACK_INTO_PIT:
         # Face AWAY from the pit so the back (the tip side) points into it.
-        target = angle_diff(nav.bearing_to_pit() + 180.0, 0.0)
+        target = (face_heading if face_heading is not None
+                  else angle_diff(nav.bearing_to_pit() + 180.0, 0.0))
         _spin_to_heading(motors, cfg, imu, nav, target)
-    motors.stop()
+
+    rev_s = _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
+    print(f"[dispose] reversed {cfg.DISPOSE_REVERSE_CM:.0f}cm ({rev_s:.2f}s) "
+          f"to seat the rear over the pit")
+
     print(f"[dispose] holding {cfg.DISPOSE_HOLD_S:.1f}s while dumping")
     time.sleep(cfg.DISPOSE_HOLD_S)
     disposer.dump()
+
+    _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
+    print(f"[dispose] pulled {cfg.DISPOSE_REVERSE_CM:.0f}cm forward, clear of the pit")
+
+    # Point back down the lane before handing control back to the sweep.
+    _spin_to_heading(motors, cfg, imu, nav, nav.target_heading)
     nav.complete_dispose()
     print("[dispose] done, resuming sweep")
+
+
+def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading):
+    """Turn to `target_heading`, then drive (slow, heading-held) up to a wall.
+
+    Stops when a believed front wall is within the standoff, or a safety timeout
+    (~2 arena lengths) elapses so it can never drive forever. Wall-referenced, so
+    it lands at a consistent standoff regardless of how far it had to go.
+    """
+    _spin_to_heading(motors, cfg, imu, nav, target_heading)
+    nav.target_heading = target_heading
+    cm_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED) if cfg.DRIVE_SPEED else 0.0
+    deadline = time.time() + (2.0 * cfg.ARENA_LENGTH_CM / cm_s if cm_s > 0 else 30.0)
+    while time.time() < deadline:
+        readings = sensors.read_all()
+        front, agree = nav.front_wall(readings)
+        if agree >= cfg.FRONT_AGREE_MIN_COUNT and front <= cfg.FRONT_STOP_DISTANCE_CM:
+            break
+        cur = nav.rel_heading(imu.yaw() if imu is not None else None)
+        steer = 0.0
+        if cur is not None:
+            steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM,
+                        cfg.HEADING_HOLD_GAIN * angle_diff(target_heading, cur)))
+        motors.drive(cfg.SLOW_SPEED, steer)
+        time.sleep(period)
+    motors.stop()
+
+
+def _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period):
+    """After the sweep: go back to the pit (mid start wall) and dump the remainder.
+
+    The pit is in the MIDDLE of the start wall (y=0), where no wall marks its
+    sideways position -- so we reference the side wall and measure across:
+      1. Drive to the start wall (the pit's side), wherever the sweep ended.
+      2. Drive to the LEFT side wall (exact x), then drive PIT_X across to the pit's
+         middle.
+      3. Face the start wall so the back points at the pit, reverse in, and dump.
+    """
+    print("[return] coverage complete -> returning to the pit for the final dump")
+
+    # 1) Onto the pit's wall (start wall, y=0). heading 180 = -y.
+    print("[return] leg 1: drive to the start wall (the pit's side)")
+    _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=180.0)
+
+    # 2) To the pit's middle, measured from the left wall. heading -90 = -x.
+    print("[return] leg 2: reference the left wall, then measure across to the middle")
+    _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
+    across = cfg.PIT_X_CM - cfg.FRONT_STOP_DISTANCE_CM  # left-wall standoff ~ car x
+    if across > 0:
+        _spin_to_heading(motors, cfg, imu, nav, 90.0)     # face +x
+        nav.target_heading = 90.0
+        secs = _drive_distance(motors, cfg, across, cfg.SLOW_SPEED)
+        print(f"[return] moved {across:.0f}cm from the left wall to the pit's middle ({secs:.2f}s)")
+
+    # 3) Final dump: face +y so the BACK points at the start-wall pit, reverse in.
+    print("[return] leg 3: final dump into the pit")
+    _dispose(motors, cfg, imu, nav, disposer, face_heading=0.0)
+    print("[return] final dump complete -- arena swept and emptied.")
 
 
 def execute(cmd, motors, cfg, imu, nav, disposer):
@@ -235,15 +326,18 @@ def run_navigation(motors, cfg, imu=None):
                                   and cfg.USE_IMU_TURN) else f"timed {cfg.TURN_TIME_S}s"
     drive_mode = "wall-follow" if cfg.USE_WALL_FOLLOW else "IMU heading-hold"
     print("=" * 78)
-    print("USE_SENSORS = True -> IMU + odometry navigation with disposal")
-    print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm")
+    print("USE_SENSORS = True -> IMU + wall-referenced navigation with disposal")
+    print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm, "
+          f"{cfg.NUM_LANES} lanes x {cfg.LANE_WIDTH_CM:.0f} cm (stop when all swept)")
     print(f"  start pose    : ({cfg.START_X_CM:.0f}, {cfg.START_Y_CM:.0f}) cm, heading 0")
     print(f"  pit           : ({cfg.PIT_X_CM:.0f}, {cfg.PIT_Y_CM:.0f}) cm, "
           f"arrive within {cfg.PIT_ARRIVAL_RADIUS_CM:.0f} cm")
     print(f"  collection cap: {cfg.COLLECTION_CAPACITY_BLOCKS} blocks")
     print(f"  driving       : {drive_mode}   turns: {turn_mode}")
-    print(f"  sensors (hw)  : {sensors.using_hardware}   "
-          f"end-of-lane fallback < {cfg.FRONT_STOP_DISTANCE_CM:.0f} cm")
+    print(f"  end of lane   : wall standoff {cfg.FRONT_STOP_DISTANCE_CM:.0f} cm, "
+          f">={cfg.FRONT_AGREE_MIN_COUNT}/3 agree, hold {cfg.WALL_PERSIST_TICKS} ticks "
+          f"(odometry backstop {cfg.LANE_END_MARGIN_CM:.0f} cm)")
+    print(f"  sensors (hw)  : {sensors.using_hardware}")
     print("=" * 78)
 
     last_t = time.monotonic()
@@ -258,6 +352,10 @@ def run_navigation(motors, cfg, imu=None):
             cmd = nav.decide(readings, yaw, dt)
             _log_status(nav, readings, yaw, cmd)
             execute(cmd, motors, cfg, imu, nav, disposer)
+            if nav.mode is Mode.DONE:
+                print(f"[nav] coverage complete: swept all {cfg.NUM_LANES} lanes")
+                _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
+                break
             time.sleep(period)
     finally:
         sensors.cleanup()

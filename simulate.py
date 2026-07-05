@@ -1,15 +1,16 @@
 """
-Off-hardware simulation of the IMU + odometry navigation.
+Off-hardware simulation of the wall-referenced navigation.
 
-Drives the NavigationController through open space (no walls in sensor range) so
-the run is entirely IMU/odometry driven: the car cruises down a lane, turns from
-odometry at the arena length, then reaches a (demo) pit and disposes. Emulates
-main.py by feeding the "true" heading back as the IMU yaw and by calling
-complete_turn()/complete_dispose() after those maneuvers. Run with:
+Unlike a pure "open space" run, this tracks a *true* position and synthesizes the
+front-sensor readings from it (gap to the end wall = ARENA_LENGTH - true_y), so the
+controller actually localizes off the wall. It emulates main.py by feeding the true
+heading back as the IMU yaw and calling complete_turn()/complete_dispose() after
+those maneuvers. Run with:
 
     python3 simulate.py
 
-The pit is placed for the demo so the car reaches it after one U-turn.
+You should see src=WALL while a wall is in range, the turn firing at the wall
+standoff (not a timer), and disposal at the pit.
 """
 
 import types
@@ -20,24 +21,18 @@ from navigation import NavigationController, Action
 INF = float("inf")
 
 
-def reading(front_left=INF, front_center=INF, front_right=INF,
-            right_front=INF, right_rear=INF):
+def reading(front):
+    """Three front sensors all seeing `front` (INF if the wall is out of range)."""
     return {
-        "front_left": front_left,
-        "front_center": front_center,
-        "front_right": front_right,
-        "right_front": right_front,
-        "right_rear": right_rear,
+        "front_left": front, "front_center": front, "front_right": front,
+        "right_front": INF, "right_rear": INF,
     }
 
 
 def cfg_demo():
-    """Config copy with a pit placed to be reached after one U-turn (see below)."""
+    """Config copy with a pit placed to be reached on the 2nd lane (x=+LANE_WIDTH)."""
     base = {k: getattr(config, k) for k in dir(config) if k.isupper()}
-    # After the first right U-turn from the start lane the car is at x ~= START+35,
-    # heading 180, driving back down; put the pit there so the demo disposes.
-    base.update(PIT_X_CM=config.START_X_CM + config.LANE_WIDTH_CM,
-                PIT_Y_CM=130.0)
+    base.update(PIT_X_CM=config.START_X_CM + config.LANE_WIDTH_CM, PIT_Y_CM=130.0)
     return types.SimpleNamespace(**base)
 
 
@@ -45,25 +40,37 @@ def main():
     cfg = cfg_demo()
     nav = NavigationController(cfg)
     nav.set_origin(0.0)
-    heading = 0.0  # the sim's "true" heading, fed back as the IMU yaw each tick
+
+    true_y = 0.0
+    forward = True          # +y on even lanes, -y on odd lanes
+    heading = 0.0
     dt = 0.2
 
     print(f"arena {cfg.ARENA_WIDTH_CM:.0f}x{cfg.ARENA_LENGTH_CM:.0f}  "
           f"start ({cfg.START_X_CM:.0f},{cfg.START_Y_CM:.0f})  "
           f"pit ({cfg.PIT_X_CM:.0f},{cfg.PIT_Y_CM:.0f})\n")
 
-    for step in range(200):
-        cmd = nav.decide(reading(), yaw=heading, dt=dt)
+    for step in range(1000):
+        gap = (cfg.ARENA_LENGTH_CM - true_y) if forward else true_y
+        front = gap if gap <= cfg.SENSOR_MAX_RANGE_CM else INF
+        cmd = nav.decide(reading(front), yaw=heading, dt=dt)
+
         extra = f" steer={cmd.steer:+.2f}" if cmd.action is Action.FORWARD else ""
         print(f"{step:3d} MODE={nav.mode.name:<9} {nav.pose_str()} "
-              f"-> {cmd.action.name:<10}{extra}  [{cmd.reason}]")
+              f"true_y={true_y:5.1f} -> {cmd.action.name:<10}{extra}  [{cmd.reason}]")
 
-        if cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
-            nav.complete_turn()          # main.py runs the blocking U-turn here
-            heading = nav.target_heading  # the car now physically faces the new lane
+        if cmd.action is Action.FORWARD:
+            step_cm = cfg.DRIVE_CM_PER_S * (cmd.speed / cfg.DRIVE_SPEED) * dt
+            true_y += step_cm if forward else -step_cm
+        elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
+            nav.complete_turn()
+            heading = nav.target_heading
+            forward = not forward          # reversed down the next lane
         elif cmd.action is Action.DISPOSE:
-            nav.complete_dispose()        # main.py runs the dump here
-            print("\n--> reached the pit and disposed; sweep would resume.")
+            print("    --> at the pit: dispose out the back, then keep sweeping")
+            nav.complete_dispose()         # main.py runs the reverse-and-dump here
+        elif cmd.action is Action.STOP:
+            print("\n--> coverage complete; car stops.")
             break
 
 

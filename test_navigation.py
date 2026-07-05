@@ -1,10 +1,12 @@
 """
-Assertions for the IMU + odometry navigation logic. Runs with plain
+Assertions for the wall-referenced navigation logic. Runs with plain
 `python3 test_navigation.py` (no dependencies) and is also discoverable by pytest.
 
-The controller now decides from three inputs -- ultrasonic readings, IMU yaw, and
-elapsed dt -- so the helpers below default yaw/dt to a stationary tick (dt=0, so
-no odometry accumulates) unless a test drives time forward on purpose.
+The controller decides from ultrasonic readings + IMU yaw + elapsed dt. Position
+down the lane comes from the front wall (with a K-of-N agreement + "near where a
+wall is expected" gate), falling back to odometry (DRIVE_CM_PER_S x time) only
+when no wall is seen. Helpers default yaw/dt to a stationary tick unless a test
+drives time forward on purpose.
 """
 
 import types
@@ -27,7 +29,7 @@ def reading(front_left=INF, front_center=INF, front_right=INF,
 
 
 def front_wall(dist, **kw):
-    """All three front sensors agree on `dist` -- a real wall ahead."""
+    """All three front sensors agree on `dist` -- a full-width wall ahead."""
     return reading(front_left=dist, front_center=dist, front_right=dist, **kw)
 
 
@@ -44,6 +46,16 @@ def nav(cfg=config):
     return n
 
 
+def drive_to_near_end(n, cfg=config):
+    """Advance odometry (no wall visible) until close to the lane end."""
+    target = cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM - 20.0
+    for _ in range(200):
+        n.decide(reading(), yaw=0.0, dt=1.0)
+        if n.lane_distance >= target:
+            break
+    return n
+
+
 # -- cruising ---------------------------------------------------------------
 
 def test_open_space_cruises_forward():
@@ -53,103 +65,181 @@ def test_open_space_cruises_forward():
 
 
 def test_on_heading_cruises_straight():
-    # Heading matches the lane target (0) -> no steering trim.
-    cmd = nav().decide(reading(front_center=150), yaw=0.0, dt=0.0)
-    assert cmd.action is Action.FORWARD
+    cmd = nav().decide(reading(), yaw=0.0, dt=0.0)
     assert abs(cmd.steer) < 1e-9
 
 
-def test_close_front_slows_but_keeps_going():
-    cmd = nav().decide(front_wall(config.FRONT_SLOW_DISTANCE_CM - 5),
-                       yaw=0.0, dt=0.0)
-    assert cmd.action is Action.FORWARD
-    assert cmd.speed == config.SLOW_SPEED
-
-
-# -- IMU heading-hold trim --------------------------------------------------
-
 def test_heading_right_of_target_trims_left():
-    # Nose turned +10deg (to the right) -> steer left (negative) to come back.
-    cmd = nav().decide(reading(front_center=150), yaw=10.0, dt=0.0)
+    cmd = nav().decide(reading(), yaw=10.0, dt=0.0)
     assert cmd.steer < 0
 
 
 def test_heading_left_of_target_trims_right():
-    cmd = nav().decide(reading(front_center=150), yaw=-10.0, dt=0.0)
+    cmd = nav().decide(reading(), yaw=-10.0, dt=0.0)
     assert cmd.steer > 0
 
 
 def test_no_imu_drives_open_loop_straight():
     n = NavigationController(config)
-    n.set_origin(None)  # no IMU heading available
-    cmd = n.decide(reading(front_center=150), yaw=None, dt=0.0)
+    n.set_origin(None)
+    cmd = n.decide(reading(), yaw=None, dt=0.0)
     assert cmd.action is Action.FORWARD
     assert cmd.steer == 0.0
 
 
-# -- trigger: odometry end-of-lane (no sensor input at all) -----------------
+# -- wall detection: position source ----------------------------------------
 
-def test_odometry_turns_at_end_of_lane():
-    # Pit parked far away so only the odometry end-of-lane trigger is exercised.
-    n = nav(cfg_with(PIT_X_CM=-10000.0, PIT_Y_CM=-10000.0))
+def test_agreeing_wall_near_expected_is_believed():
+    # Near the lane end, a full-width wall at the expected gap -> WALL source.
+    n = drive_to_near_end(nav())
+    n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM + 10), yaw=0.0, dt=0.2)
+    assert n.pos_source == "WALL"
+    assert n.front_agree == 3
+
+
+def test_wall_ends_lane_after_persistence():
+    n = drive_to_near_end(nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4)))
     cmd = None
-    # Drive forward in open space; distance accumulates until the lane is done.
-    for _ in range(40):
-        cmd = n.decide(reading(), yaw=0.0, dt=1.0)
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 10),
+                       yaw=0.0, dt=0.2)
+    assert cmd.action is Action.TURN_RIGHT       # bottom-left start turns right first
+    assert "wall" in cmd.reason
+
+
+def test_one_tick_wall_does_not_turn_yet():
+    # A single close-wall tick must not turn (persistence not met).
+    n = drive_to_near_end(nav())
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 10), yaw=0.0, dt=0.2)
+    if config.WALL_PERSIST_TICKS > 1:
+        assert cmd.action is Action.FORWARD
+
+
+# -- block / bump rejection -------------------------------------------------
+
+def test_single_sensor_object_is_ignored():
+    # One sensor sees something close, the other two see nothing -> not a wall.
+    n = drive_to_near_end(nav())
+    cmd = n.decide(reading(front_left=20), yaw=0.0, dt=0.2)
+    assert cmd.action is Action.FORWARD
+    assert n.pos_source == "BRIDGE"
+
+
+def test_agreeing_object_far_from_expected_is_not_the_wall():
+    # At the START of a lane, a full-width object 30 cm ahead can't be the end
+    # wall (odometry expects it ~3 m away) -> treated as a block, no turn.
+    n = nav()
+    cmd = n.decide(front_wall(30), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert n.pos_source == "BRIDGE"
+
+
+# -- bridge: wall drops out -------------------------------------------------
+
+def test_wall_dropout_bridges_on_odometry():
+    n = drive_to_near_end(nav())
+    n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM + 15), yaw=0.0, dt=0.2)
+    assert n.pos_source == "WALL"
+    y_before = n.y
+    cmd = n.decide(reading(), yaw=0.0, dt=0.2)   # wall vanishes
+    assert n.pos_source == "BRIDGE"
+    assert cmd.action is Action.FORWARD
+    assert n.y >= y_before                        # position kept advancing, not lost
+
+
+# -- odometry backstop (no wall ever seen) ----------------------------------
+
+def test_odometry_backstop_turns_without_any_wall():
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    cmd = None
+    for _ in range(60):
+        cmd = n.decide(reading(), yaw=0.0, dt=1.0)   # never any wall
         if cmd.action is not Action.FORWARD:
             break
     assert cmd.action is Action.TURN_RIGHT
-    assert "odometry" in cmd.reason
-    assert n.lane_distance >= n.cfg.ARENA_LENGTH_CM - n.cfg.LANE_END_MARGIN_CM
-
-
-# -- fallback trigger: wall straight ahead ----------------------------------
-
-def test_front_wall_fallback_turns_right_first():
-    # From the bottom-left corner the serpentine starts RIGHT; a close front wall
-    # forces the turn.
-    cmd = nav().decide(front_wall(15), yaw=0.0, dt=0.0)
-    assert cmd.action is Action.TURN_RIGHT
-    assert "FALLBACK" in cmd.reason
-
-
-def test_single_drifting_front_sensor_is_ignored():
-    stop = config.FRONT_STOP_DISTANCE_CM
-    cmd = nav().decide(reading(front_left=stop - 10, front_center=200,
-                               front_right=200), yaw=0.0, dt=0.0)
-    assert cmd.action is Action.FORWARD
-
-
-def test_single_dropout_does_not_hide_a_real_wall():
-    stop = config.FRONT_STOP_DISTANCE_CM
-    cmd = nav().decide(reading(front_left=stop - 10, front_center=stop - 8,
-                               front_right=INF), yaw=0.0, dt=0.0)
-    assert cmd.action is Action.TURN_RIGHT
+    assert "backstop" in cmd.reason
 
 
 def test_serpentine_turns_alternate_right_first():
-    n = nav()
-    turns = [n.decide(front_wall(15), yaw=0.0, dt=0.0).action for _ in range(4)]
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    turns = []
+    for _ in range(200):
+        c = n.decide(reading(), yaw=0.0, dt=1.0)
+        if c.action is not Action.FORWARD:
+            turns.append(c.action)
+            if len(turns) == 4:
+                break
     assert turns == [Action.TURN_RIGHT, Action.TURN_LEFT,
                      Action.TURN_RIGHT, Action.TURN_LEFT]
+
+
+# -- coverage / done condition ----------------------------------------------
+
+def test_stops_when_all_lanes_swept():
+    # Small arena so it finishes fast; no wall ever, so odometry backstop turns.
+    cfg = cfg_with(ARENA_WIDTH_CM=70.0, LANE_WIDTH_CM=35.0, NUM_LANES=2,
+                   PIT_X_CM=-1e4, PIT_Y_CM=-1e4)
+    n = nav(cfg)
+    cmd = None
+    for _ in range(400):
+        cmd = n.decide(reading(), yaw=0.0, dt=1.0)
+        if cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
+            n.complete_turn()          # emulate main executing the U-turn
+        elif cmd.action is Action.STOP:
+            break
+    assert cmd.action is Action.STOP
+    assert n.mode is Mode.DONE
+    assert "coverage complete" in cmd.reason
+
+
+def test_done_latches_stopped():
+    cfg = cfg_with(ARENA_WIDTH_CM=70.0, LANE_WIDTH_CM=35.0, NUM_LANES=2,
+                   PIT_X_CM=-1e4, PIT_Y_CM=-1e4)
+    n = nav(cfg)
+    for _ in range(400):
+        c = n.decide(reading(), yaw=0.0, dt=1.0)
+        if c.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
+            n.complete_turn()
+        elif c.action is Action.STOP:
+            break
+    # Once done, further ticks keep returning STOP (never resumes sweeping).
+    assert n.decide(reading(), yaw=0.0, dt=1.0).action is Action.STOP
+    assert n.decide(front_wall(20), yaw=0.0, dt=1.0).action is Action.STOP
+
+
+# -- cross-lane position from lane counting ---------------------------------
+
+def test_lane_index_sets_cross_lane_x():
+    n = nav()
+    assert n.x == config.START_X_CM
+    n.complete_turn()
+    assert n.x == config.START_X_CM  # x is recomputed on the next pose update
+    n.decide(reading(), yaw=0.0, dt=0.0)
+    assert abs(n.x - (config.START_X_CM + config.LANE_WIDTH_CM)) < 1e-9
 
 
 # -- disposal: pit arrival --------------------------------------------------
 
 def test_pit_arrival_triggers_dispose():
-    n = nav()
-    n.x, n.y = config.PIT_X_CM, config.PIT_Y_CM  # place the car at the pit
-    cmd = n.decide(reading(), yaw=0.0, dt=0.0)
+    n = nav(cfg_with(PIT_X_CM=config.START_X_CM, PIT_Y_CM=60.0,
+                     PIT_ARRIVAL_RADIUS_CM=15.0))
+    cmd = None
+    for _ in range(20):
+        cmd = n.decide(reading(), yaw=0.0, dt=0.5)   # odometry up the lane
+        if cmd.action is Action.DISPOSE:
+            break
     assert cmd.action is Action.DISPOSE
     assert n.mode is Mode.DISPOSING
 
 
 def test_dispose_does_not_retrigger_until_leaving_pit():
-    n = nav()
-    n.x, n.y = config.PIT_X_CM, config.PIT_Y_CM
-    assert n.decide(reading(), yaw=0.0, dt=0.0).action is Action.DISPOSE
-    n.complete_dispose()  # main.py would run the dump, then this
-    # Still inside the pit radius -> must NOT dispose again immediately.
+    n = nav(cfg_with(PIT_X_CM=config.START_X_CM, PIT_Y_CM=60.0,
+                     PIT_ARRIVAL_RADIUS_CM=15.0))
+    for _ in range(20):
+        if n.decide(reading(), yaw=0.0, dt=0.5).action is Action.DISPOSE:
+            break
+    n.complete_dispose()
+    # Still inside the pit radius (barely moved) -> must NOT dispose again.
     assert n.decide(reading(), yaw=0.0, dt=0.0).action is not Action.DISPOSE
 
 
@@ -157,10 +247,9 @@ def test_dispose_does_not_retrigger_until_leaving_pit():
 
 def test_wall_follow_trims_toward_far_wall_when_enabled():
     n = nav(cfg_with(USE_WALL_FOLLOW=True))
-    cmd = n.decide(reading(front_center=150, right_front=40, right_rear=40),
-                   yaw=0.0, dt=0.0)
+    cmd = n.decide(reading(right_front=40, right_rear=40), yaw=0.0, dt=0.0)
     assert cmd.action is Action.FORWARD
-    assert cmd.steer > 0  # too far from the right wall -> steer toward it
+    assert cmd.steer > 0
 
 
 def _run():

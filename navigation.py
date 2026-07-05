@@ -1,23 +1,32 @@
 """
-Core navigation logic as a small state machine driven by the IMU + odometry,
-with the ultrasonic sensors as a safety fallback.
+Core navigation logic as a small state machine that FUSES the IMU and the front
+ultrasonics for localization, so position doesn't depend on wheel odometry over a
+bumpy floor.
 
   Modes:
     DRIVING   -- cruise forward, holding the lane's target heading with the IMU.
     TURNING   -- end-of-lane U-turn (executed as a blocking maneuver in main.py).
     DISPOSING -- reached the known pit: dump the collected blocks out the back.
 
-Instead of following the right wall and watching the front sensors for the end
-of a lane, the car now:
-  * holds a straight heading using IMU feedback (HEADING_HOLD_GAIN), and
-  * tracks how far it has driven down the lane by dead-reckoning
-    (DRIVE_CM_PER_S x time), turning when it has covered the arena length.
-The front ultrasonic stop is only a fallback for when a wall appears sooner than
-odometry expects. Position is integrated in a start-relative frame so the car
-knows when it has reached the fixed pit location (PIT_X_CM, PIT_Y_CM).
+Localization model (start-relative frame: start bottom-left (0,0), heading 0 = +y
+along ARENA_LENGTH, +x = right across ARENA_WIDTH):
 
-This module is still pure (no hardware, no I/O beyond the passed-in readings /
-yaw), so it can be unit-tested and simulated on a laptop.
+  * heading        -- IMU yaw (reliable, slip-proof).
+  * cross-lane x   -- lane counting: x = START_X + sweep_sign * lane_index * LANE_WIDTH.
+                      Each U-turn steps exactly one lane, bump or no bump.
+  * along-lane y   -- the FRONT WALL: the gap the front sensors measure to the end
+                      wall IS the position. A close reading is only believed to be
+                      the wall when K-of-N front sensors AGREE (rejects a narrow
+                      block) AND it is near where odometry expects the wall (rejects
+                      a mid-lane object). When no wall is seen we BRIDGE with
+                      odometry (DRIVE_CM_PER_S x time) for a bounded time.
+  * end of lane    -- primary: the believed wall within FRONT_STOP_DISTANCE_CM,
+                      held WALL_PERSIST_TICKS ticks. Backstop: odometry distance if
+                      the wall is never seen at all.
+
+Time (DRIVE_CM_PER_S) is thus only a bridge + a rough prior, never the sole source
+of position. This module is pure (no hardware, no I/O beyond the passed-in
+readings / yaw), so it can be unit-tested and simulated on a laptop.
 """
 
 import math
@@ -49,6 +58,7 @@ class Mode(Enum):
     DRIVING = auto()
     TURNING = auto()
     DISPOSING = auto()
+    DONE = auto()
 
 
 class Turn(Enum):
@@ -70,35 +80,40 @@ class NavigationController:
         self.cfg = cfg
         self.collector = collector if collector is not None else Collector(cfg)
 
-        # -- pose, in the start-relative frame (see config.START_*/PIT_*) -------
-        # heading 0 = the car's initial facing; forward unit vector is
-        # (sin(heading), cos(heading)), so +y is straight ahead at start and +x
-        # is to the car's right. Position is in centimetres.
+        # -- pose, in the start-relative frame ---------------------------------
         self.x = cfg.START_X_CM
         self.y = cfg.START_Y_CM
         self.heading_rel = 0.0       # current heading, degrees, relative to start
         self.target_heading = 0.0    # heading we want to hold down this lane
-        self.lane_distance = 0.0     # cm driven down the current lane so far
+        self.lane_distance = 0.0     # cm along the current lane (wall-anchored when a wall is seen, else odometry)
         self.mode = Mode.DRIVING
 
-        # Heading reference: origin yaw captured by set_origin(); until then (or
-        # with no IMU) we have no absolute heading, so heading-hold is disabled
-        # and the car cruises open-loop straight.
+        # Heading reference (set by set_origin()); until then heading-hold is off.
         self._yaw0 = None
         self._has_heading = False
 
-        # Serpentine sweep: alternate the U-turn direction at each end wall so the
-        # car snakes across the arena. The first turn (config.SERPENTINE_FIRST_TURN)
-        # sets which way it steps sideways -- RIGHT from a bottom-left start.
+        # Serpentine sweep + which way it steps sideways. From a bottom-left start
+        # the first turn is RIGHT and lanes march +x; from bottom-right, LEFT / -x.
         first = getattr(cfg, "SERPENTINE_FIRST_TURN", "left").lower()
         self._next_serpentine_turn = Turn.RIGHT if first == "right" else Turn.LEFT
-        self._last_turn = None       # direction of the turn currently being executed
+        self._sweep_sign = 1.0 if first == "right" else -1.0
+        self._last_turn = None
+        self._lane_index = 0
 
         # Pit hysteresis: once we dump we don't re-trigger until we leave the zone.
         self._pit_handled = False
 
-        # Odometry bookkeeping: remember what we last commanded so the next tick
-        # can integrate how far/where the car moved during dt.
+        # Coverage: once the last lane (NUM_LANES-1) is finished, we're done.
+        self._done = False
+
+        # Wall-fusion state (updated every tick by _update_pose).
+        self.front_wall_cm = INF     # believed distance to the end wall, or INF
+        self.front_agree = 0         # how many front sensors agreed this tick
+        self.pos_source = "BRIDGE"   # "WALL" = y from a believed wall, "BRIDGE" = from odometry
+        self._bridge_s = 0.0         # how long we've gone without a believed wall
+        self._wall_persist = 0       # consecutive ticks the wall-stop has held
+
+        # Odometry bookkeeping for the bridge / expectation prior.
         self._last_speed = 0.0
         self._last_action = Action.STOP
 
@@ -118,16 +133,14 @@ class NavigationController:
     # -- public API ---------------------------------------------------------
 
     def decide(self, readings, yaw=None, dt=0.0):
-        """Map sensors + IMU yaw + elapsed dt to a Command, updating pose/mode.
-
-        readings: {sensor_name: distance_cm} (missing/out-of-range = float('inf'))
-        yaw:      IMU heading in degrees, or None if unavailable this tick
-        dt:       seconds since the previous decide() call (for odometry)
-        """
+        """Map sensors + IMU yaw + elapsed dt to a Command, updating pose/mode."""
         cfg = self.cfg
-        self._update_pose(yaw, dt)
+        self._update_pose(readings, yaw, dt)
 
-        front = self._front_distance(readings)
+        # 0) Whole arena swept? Latch STOP and stay stopped.
+        if self._done:
+            self.mode = Mode.DONE
+            return self._remember(Command(Action.STOP, reason="coverage complete"))
 
         # 1) At the pit? Highest priority: stop sweeping and dispose.
         if self._at_pit() and self._should_dispose():
@@ -137,25 +150,41 @@ class NavigationController:
                 Action.DISPOSE, speed=0.0,
                 reason=f"reached pit ({self.collector}) -> dispose"))
 
-        # 2) End of lane? Either odometry says we've covered the arena length, or
-        #    the front sensors (fallback) see a wall closer than expected.
-        lane_done = self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM)
-        wall_ahead = front <= cfg.FRONT_STOP_DISTANCE_CM
-        if lane_done or wall_ahead:
+        # 2) End of lane? Primary = a believed wall within the standoff, held for
+        #    a few ticks. Backstop = odometry distance if the wall is never seen.
+        wall_stop = (self.pos_source == "WALL"
+                     and self.front_wall_cm <= cfg.FRONT_STOP_DISTANCE_CM)
+        self._wall_persist = self._wall_persist + 1 if wall_stop else 0
+        wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
+        # Odometry backstop only applies when we have NO believed wall (total
+        # dropout). With a wall in view the persistence-gated trigger governs, so
+        # a close wall re-anchoring lane_distance can't skip persistence.
+        odo_backstop = (self.pos_source != "WALL"
+                        and self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM))
+
+        if wall_trigger or odo_backstop:
+            # Was that the end of the LAST lane? Then the arena is swept -> done.
+            if self._lane_index >= cfg.NUM_LANES - 1:
+                self._done = True
+                self.mode = Mode.DONE
+                return self._remember(Command(
+                    Action.STOP,
+                    reason=f"coverage complete: swept all {cfg.NUM_LANES} lanes"))
             turn = self._next_serpentine_turn
             self._advance_serpentine()
             self._last_turn = turn
             self.mode = Mode.TURNING
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
-            trigger = ("odometry: lane length reached" if lane_done
-                       else f"FALLBACK front wall {front:.0f}cm")
+            trigger = (f"wall {self.front_wall_cm:.0f}cm (x{self.front_agree} agree)"
+                       if wall_trigger else "odometry backstop (no wall seen)")
             return self._remember(Command(
                 action, speed=cfg.TURN_SPEED,
                 reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
 
         # 3) Cruise forward, holding heading (IMU) unless wall-follow is selected.
         self.mode = Mode.DRIVING
-        speed = cfg.SLOW_SPEED if front <= cfg.FRONT_SLOW_DISTANCE_CM else cfg.DRIVE_SPEED
+        speed = (cfg.SLOW_SPEED if self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM
+                 else cfg.DRIVE_SPEED)
         steer = self._cruise_trim(readings)
         return self._remember(Command(
             Action.FORWARD, speed=speed, steer=steer, reason="cruising"))
@@ -163,21 +192,15 @@ class NavigationController:
     def complete_turn(self):
         """Call after main.py finishes the blocking U-turn maneuver.
 
-        Folds the maneuver's net effect into the pose: heading reverses ~180 deg,
-        the car has shifted one LANE_WIDTH_CM sideways, and a fresh lane starts.
-        (The turn runs as a blocking maneuver with no decide() ticks, so its
-        motion is applied here rather than integrated tick-by-tick.)
+        Steps to the next lane (heading reversed ~180, one lane over) and resets
+        the per-lane fusion state. Cross-lane x comes from the lane index, so the
+        sideways step is exact regardless of how the physical shift went.
         """
-        cfg = self.cfg
-        pre = self.target_heading
-        # First 90deg spin sets the intermediate heading the lane-shift is driven
-        # along; turn_right rotates clockwise (heading +90), turn_left -90.
-        step = 90.0 if self._last_turn is Turn.RIGHT else -90.0
-        mid = pre + step
-        self.x += cfg.LANE_WIDTH_CM * math.sin(math.radians(mid))
-        self.y += cfg.LANE_WIDTH_CM * math.cos(math.radians(mid))
-        self.target_heading = angle_diff(pre + 180.0, 0.0)
+        self._lane_index += 1
+        self.target_heading = angle_diff(self.target_heading + 180.0, 0.0)
         self.lane_distance = 0.0
+        self._wall_persist = 0
+        self._bridge_s = 0.0
         self.mode = Mode.DRIVING
 
     def complete_dispose(self):
@@ -191,6 +214,13 @@ class NavigationController:
             return None
         return angle_diff(yaw, self._yaw0)
 
+    def front_wall(self, readings):
+        """Public wrapper: (believed wall distance, agreeing count). See _front_wall.
+
+        Used by main.py's blocking return-to-pit maneuver to drive up to a wall.
+        """
+        return self._front_wall(readings)
+
     def bearing_to_pit(self):
         """Heading (start-relative deg) pointing from the car toward the pit."""
         dx = self.cfg.PIT_X_CM - self.x
@@ -198,8 +228,11 @@ class NavigationController:
         return math.degrees(math.atan2(dx, dy))  # matches forward=(sin,cos)
 
     def pose_str(self):
+        wall = "--" if self.front_wall_cm == INF else f"{self.front_wall_cm:5.1f}"
         return (f"pos=({self.x:6.1f},{self.y:6.1f}) hdg={self.heading_rel:6.1f} "
-                f"tgt={self.target_heading:6.1f} lane={self.lane_distance:5.1f}")
+                f"tgt={self.target_heading:6.1f} lane#{self._lane_index} "
+                f"ld={self.lane_distance:5.1f} src={self.pos_source:6s} "
+                f"wall={wall}(x{self.front_agree})")
 
     # -- internals ----------------------------------------------------------
 
@@ -209,24 +242,71 @@ class NavigationController:
         self._last_speed = cmd.speed if cmd.action is Action.FORWARD else 0.0
         return cmd
 
-    def _update_pose(self, yaw, dt):
-        """Advance heading from the IMU and position from the last drive command."""
+    def _update_pose(self, readings, yaw, dt):
+        """Fuse IMU heading + front wall + odometry into the pose estimate."""
         cfg = self.cfg
         if yaw is not None and self._has_heading:
             self.heading_rel = angle_diff(yaw, self._yaw0)
 
-        # Only forward motion moves the car between ticks (turns are blocking and
-        # handled in complete_turn). Convert the last speed fraction to cm using
-        # the measured DRIVE_CM_PER_S (calibrated at DRIVE_SPEED).
-        if self._last_action is Action.FORWARD and dt > 0.0 and cfg.DRIVE_SPEED > 0.0:
-            dist = cfg.DRIVE_CM_PER_S * (self._last_speed / cfg.DRIVE_SPEED) * dt
-            self.x += dist * math.sin(math.radians(self.heading_rel))
-            self.y += dist * math.cos(math.radians(self.heading_rel))
-            self.lane_distance += dist
+        # Odometry accumulator: the bridge value + the "where's the wall" prior.
+        if (self._last_action is Action.FORWARD and dt > 0.0
+                and cfg.DRIVE_SPEED > 0.0):
+            self.lane_distance += (cfg.DRIVE_CM_PER_S
+                                   * (self._last_speed / cfg.DRIVE_SPEED) * dt)
+
+        forward = math.cos(math.radians(self.target_heading)) >= 0.0
+
+        # Front wall: distance + how many sensors agree on it.
+        front_dist, agree = self._front_wall(readings)
+        self.front_agree = agree
+        if agree >= cfg.FRONT_AGREE_MIN_COUNT:
+            # Believable ONLY if it's near where odometry expects the end wall --
+            # this rejects a mid-lane object (a block) that fooled the agreement.
+            expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
+            if abs(expected_gap - front_dist) <= cfg.WALL_EXPECT_TOL_CM:
+                self.lane_distance = cfg.ARENA_LENGTH_CM - front_dist  # re-anchor to the wall
+                self.front_wall_cm = front_dist
+                self.pos_source = "WALL"
+                self._bridge_s = 0.0
+            else:
+                # Agreed, but not where a wall belongs -> an obstacle to collect,
+                # not the lane end. Report it (so we slow) but don't trust it as position.
+                self.front_wall_cm = front_dist
+                self.pos_source = "BRIDGE"
+                self._bridge_s += dt
+        else:
+            self.front_wall_cm = INF
+            self.pos_source = "BRIDGE"
+            self._bridge_s += dt
+
+        # Absolute pose. x from the (exact) lane index; y from lane_distance in the
+        # current lane's direction.
+        self.x = cfg.START_X_CM + self._sweep_sign * self._lane_index * cfg.LANE_WIDTH_CM
+        self.y = (cfg.START_Y_CM + self.lane_distance if forward
+                  else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
 
         # Leaving the pit zone re-arms disposal for the next visit.
         if self._pit_handled and not self._at_pit():
             self._pit_handled = False
+
+    def _front_wall(self, readings):
+        """Believed distance to the wall ahead + how many front sensors agree.
+
+        A real end wall is flat and spans the whole front, so all the (edge-to-edge)
+        front sensors read nearly the same distance; a narrow block/bump shows up on
+        one and is outvoted. Returns (median_of_the_agreeing_cluster, cluster_size),
+        or (INF, <count>) when fewer than the required number agree.
+        """
+        cfg = self.cfg
+        finite = sorted(d for d in (readings.get(n, INF) for n in cfg.FRONT_SENSORS)
+                        if d != INF)
+        if len(finite) < cfg.FRONT_AGREE_MIN_COUNT:
+            return INF, len(finite)
+        candidate = statistics.median(finite)
+        cluster = [d for d in finite if abs(d - candidate) <= cfg.FRONT_AGREE_TOL_CM]
+        if len(cluster) >= cfg.FRONT_AGREE_MIN_COUNT:
+            return statistics.median(cluster), len(cluster)
+        return INF, len(cluster)
 
     def _at_pit(self):
         dx = self.cfg.PIT_X_CM - self.x
@@ -241,11 +321,6 @@ class NavigationController:
         dispose on arrival at the pit as long as we haven't already this visit.
         """
         return not self._pit_handled
-
-    def _front_distance(self, readings):
-        """Median of the front sensors -- robust to one drifting/dropped sensor."""
-        values = [readings.get(name, INF) for name in self.cfg.FRONT_SENSORS]
-        return statistics.median(values)
 
     def _advance_serpentine(self):
         self._next_serpentine_turn = (
