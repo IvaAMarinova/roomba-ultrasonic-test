@@ -17,6 +17,7 @@ import time
 
 import config
 from actuators import Disposer, FrontServo
+from log import log
 from motors import MotorDriver
 from navigation import NavigationController, Action, Mode, angle_diff
 
@@ -75,9 +76,9 @@ def _spin_imu(motors, cfg, direction, imu):
             speed = min(1.0, cfg.TURN_SPEED * cfg.IMU_TURN_BOOST_FACTOR)
             turn_fn(speed)
             boosted = True
-            print(f"    [u-turn] stall: only {abs(turned):.1f}deg in "
-                  f"{boost_after:.1f}s (< half of {cfg.TURN_ANGLE_DEG:.0f}) "
-                  f"-> boost spin speed {cfg.TURN_SPEED:.2f} -> {speed:.2f}")
+            log("uturn", step="stall_boost", turned=abs(turned),
+                window_s=boost_after, target=cfg.TURN_ANGLE_DEG,
+                speed_from=cfg.TURN_SPEED, speed_to=speed)
     motors.stop()
     return abs(turned)
 
@@ -91,10 +92,10 @@ def _spin_90(motors, cfg, direction, imu=None):
     if imu is not None and imu.available and getattr(cfg, "USE_IMU_TURN", False):
         turned = _spin_imu(motors, cfg, direction, imu)
         if turned is not None:
-            print(f"    [u-turn] IMU spin {direction} {turned:.1f}deg "
-                  f"(target {cfg.TURN_ANGLE_DEG:.0f})")
+            log("uturn", step="imu_spin", direction=direction, turned=turned,
+                target=cfg.TURN_ANGLE_DEG)
             return
-        print("    [u-turn] IMU gave no heading -> timed spin fallback")
+        log("uturn", step="timed_fallback", reason="IMU gave no heading")
     _spin_timed(motors, cfg, direction)
 
 
@@ -106,10 +107,10 @@ def _spin_to_heading(motors, cfg, imu, nav, target_rel):
     """
     cur = nav.rel_heading(imu.yaw()) if imu is not None else None
     if cur is None:
-        print("[orient] no IMU heading -> skipping orient")
+        log("orient", step="skip", reason="no IMU heading")
         return False
     err0 = angle_diff(target_rel, cur)
-    print(f"[orient] to {target_rel:.0f}deg (cur {cur:.0f}, err {err0:.0f})")
+    log("orient", step="turn", target=target_rel, current=cur, error=err0)
     deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
     while time.time() < deadline:
         cur = nav.rel_heading(imu.yaw())
@@ -138,14 +139,14 @@ def _u_turn(motors, cfg, direction, imu, nav):
     reversed, one lane shifted) back into the odometry pose.
     """
     shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
-    print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
+    log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
     _spin_90(motors, cfg, direction, imu)
-    print(f"    [u-turn] forward {cfg.LANE_WIDTH_CM:.0f}cm lane shift ({shift_s:.2f}s)")
+    log("uturn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
     _advance_one_lane(motors, cfg)
-    print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
+    log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
     _spin_90(motors, cfg, direction, imu)
     nav.complete_turn()
-    print(f"    [u-turn] done, resuming sweep ({nav.pose_str()})")
+    log("uturn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
 
 
 def _drive_distance(motors, cfg, distance_cm, speed):
@@ -184,20 +185,19 @@ def _dispose(motors, cfg, imu, nav, disposer, face_heading=None):
         _spin_to_heading(motors, cfg, imu, nav, target)
 
     rev_s = _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
-    print(f"[dispose] reversed {cfg.DISPOSE_REVERSE_CM:.0f}cm ({rev_s:.2f}s) "
-          f"to seat the rear over the pit")
+    log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
 
-    print(f"[dispose] holding {cfg.DISPOSE_HOLD_S:.1f}s while dumping")
+    log("dispose", step="dump", hold_s=cfg.DISPOSE_HOLD_S)
     time.sleep(cfg.DISPOSE_HOLD_S)
     disposer.dump()
 
     _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
-    print(f"[dispose] pulled {cfg.DISPOSE_REVERSE_CM:.0f}cm forward, clear of the pit")
+    log("dispose", step="clear", cm=cfg.DISPOSE_REVERSE_CM)
 
     # Point back down the lane before handing control back to the sweep.
     _spin_to_heading(motors, cfg, imu, nav, nav.target_heading)
     nav.complete_dispose()
-    print("[dispose] done, resuming sweep")
+    log("dispose", step="done")
 
 
 def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading,
@@ -274,18 +274,15 @@ def execute(cmd, motors, cfg, imu, nav, disposer):
         motors.stop()
 
 
-def _format(readings):
-    return " ".join(
-        f"{name}={('--' if dist == float('inf') else f'{dist:5.1f}')}"
-        for name, dist in readings.items()
-    )
-
-
 def _log_status(nav, readings, yaw, cmd):
     """One structured line per control tick: mode, pose, sensors, IMU, action."""
-    yaw_s = "--" if yaw is None else f"{yaw:6.1f}"
-    print(f"MODE={nav.mode.name:<9} | {nav.pose_str()} | {_format(readings)} "
-          f"| yaw={yaw_s} | {nav.collector} | -> {cmd.action.name:<10} ({cmd.reason})")
+    log("nav", mode=nav.mode.name, action=cmd.action.name, reason=cmd.reason,
+        x=nav.x, y=nav.y, heading=nav.heading_rel,
+        target_heading=nav.target_heading, lane=nav._lane_index,
+        lane_distance=nav.lane_distance, front_wall=nav.front_wall_cm,
+        front_agree=nav.front_agree, yaw=yaw, blocks=nav.collector.count,
+        **readings)
+
 
 
 def run_drive_test(motors, cfg, imu=None):
@@ -301,10 +298,10 @@ def run_drive_test(motors, cfg, imu=None):
     print(f"USE_SENSORS = False -> open-loop drive test (turns: {turn_mode})")
     for action, seconds in cfg.DRIVE_TEST_SEQUENCE:
         if action in ("left", "right"):
-            print(f"[drive-test] turn {action} {cfg.TURN_ANGLE_DEG:.0f}deg")
+            log("drive_test", step="turn", direction=action, deg=cfg.TURN_ANGLE_DEG)
             _spin_90(motors, cfg, action, imu)
             continue
-        print(f"[drive-test] {action:<7} for {seconds:.2f}s")
+        log("drive_test", step=action, seconds=seconds)
         if action == "forward":
             motors.drive(cfg.DRIVE_SPEED, 0.0)
         else:  # "stop"

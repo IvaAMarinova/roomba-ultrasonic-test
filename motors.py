@@ -15,6 +15,7 @@ navigation logic can be exercised without hardware.
 """
 
 import config as default_config
+from log import log
 
 try:
     import RPi.GPIO as GPIO
@@ -82,7 +83,7 @@ class MotorDriver:
 
         if self.dry_run:
             label = "stop" if duty == 0.0 else ("fwd" if forward else "rev")
-            print(f"[motor] {side:<5} {label:<4} duty={duty:5.1f}%")
+            log("motor", side=side, mode=label, duty=duty)
             return
 
         GPIO.output(spec["dir"], GPIO.HIGH if forward else GPIO.LOW)
