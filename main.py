@@ -5,8 +5,10 @@ Entry point. Two modes, selected by config.USE_SENSORS:
                           script (config.DRIVE_TEST_SEQUENCE) so you can check
                           the motors / H-bridges / turning on the real car.
                           The sensors are never touched.
-  USE_SENSORS = True   -> sensor-driven navigation: read sensors -> decide ->
-                          drive, repeat.
+  USE_SENSORS = True   -> IMU + odometry navigation: hold heading with the IMU,
+                          track position by dead-reckoning against the known
+                          arena size, use the ultrasonics only as a wall-stop
+                          fallback, and dispose collected blocks at the pit.
 
 Run on the Pi with:  python3 main.py
 """
@@ -14,13 +16,9 @@ Run on the Pi with:  python3 main.py
 import time
 
 import config
+from actuators import Disposer
 from motors import MotorDriver
-from navigation import NavigationController, Action
-
-
-def _angle_diff(a, b):
-    """Shortest signed difference a - b, normalized to (-180, 180] degrees."""
-    return (a - b + 180.0) % 360.0 - 180.0
+from navigation import NavigationController, Action, Mode, angle_diff
 
 
 def _spin_timed(motors, cfg, direction):
@@ -64,7 +62,7 @@ def _spin_imu(motors, cfg, direction, imu):
         cur = imu.yaw()
         if cur is None:
             continue
-        step = _angle_diff(cur, prev)
+        step = angle_diff(cur, prev)
         prev = cur
         if abs(step) > cfg.IMU_GLITCH_MAX_STEP_DEG:
             continue  # corrupted I2C read -- ignore this sample
@@ -100,6 +98,31 @@ def _spin_90(motors, cfg, direction, imu=None):
     _spin_timed(motors, cfg, direction)
 
 
+def _spin_to_heading(motors, cfg, imu, nav, target_rel):
+    """Rotate in place until the car's heading ~= target_rel (start-relative deg).
+
+    Re-picks the turn direction each poll so a small overshoot is corrected. No-op
+    (and returns False) if no IMU heading is available.
+    """
+    cur = nav.rel_heading(imu.yaw()) if imu is not None else None
+    if cur is None:
+        print("[orient] no IMU heading -> skipping orient")
+        return False
+    err0 = angle_diff(target_rel, cur)
+    print(f"[orient] to {target_rel:.0f}deg (cur {cur:.0f}, err {err0:.0f})")
+    deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
+    while time.time() < deadline:
+        cur = nav.rel_heading(imu.yaw())
+        if cur is not None:
+            err = angle_diff(target_rel, cur)
+            if abs(err) <= cfg.IMU_TURN_TOLERANCE_DEG:
+                break
+            (motors.turn_right if err > 0 else motors.turn_left)(cfg.TURN_SPEED)
+        time.sleep(cfg.IMU_TURN_POLL_S)
+    motors.stop()
+    return True
+
+
 def _advance_one_lane(motors, cfg):
     """Drive straight by LANE_WIDTH_CM (the sideways shift into the next lane)."""
     motors.drive(cfg.DRIVE_SPEED, 0.0)
@@ -107,23 +130,51 @@ def _advance_one_lane(motors, cfg):
     motors.stop()
 
 
-def execute(cmd, motors, cfg, imu=None):
+def _u_turn(motors, cfg, direction, imu, nav):
+    """End-of-lane U-turn: spin 90, shift one lane width, spin 90 -- one decision.
+
+    No sensors are read while it runs; the steps are logged so the second spin
+    isn't a surprise. Afterwards nav.complete_turn() folds the net motion (heading
+    reversed, one lane shifted) back into the odometry pose.
+    """
+    shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
+    print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
+    _spin_90(motors, cfg, direction, imu)
+    print(f"    [u-turn] forward {cfg.LANE_WIDTH_CM:.0f}cm lane shift ({shift_s:.2f}s)")
+    _advance_one_lane(motors, cfg)
+    print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
+    _spin_90(motors, cfg, direction, imu)
+    nav.complete_turn()
+    print(f"    [u-turn] done, resuming sweep ({nav.pose_str()})")
+
+
+def _dispose(motors, cfg, imu, nav, disposer):
+    """Disposal maneuver: point the car's BACK at the pit, then dump.
+
+    Servo actuation lands later (see actuators.Disposer); for now it orients,
+    holds, and logs the dump. Afterwards nav.complete_dispose() empties the
+    (stub) bucket and returns to DRIVING.
+    """
+    if cfg.DISPOSE_BACK_INTO_PIT:
+        # Face AWAY from the pit so the back (the tip side) points into it.
+        target = angle_diff(nav.bearing_to_pit() + 180.0, 0.0)
+        _spin_to_heading(motors, cfg, imu, nav, target)
+    motors.stop()
+    print(f"[dispose] holding {cfg.DISPOSE_HOLD_S:.1f}s while dumping")
+    time.sleep(cfg.DISPOSE_HOLD_S)
+    disposer.dump()
+    nav.complete_dispose()
+    print("[dispose] done, resuming sweep")
+
+
+def execute(cmd, motors, cfg, imu, nav, disposer):
     if cmd.action is Action.FORWARD:
         motors.drive(cmd.speed, cmd.steer)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
-        # End-of-lane U-turn: rotate 90 deg, shift one lane width to the side,
-        # rotate 90 deg the same way to face back down the next lane. This whole
-        # maneuver is ONE decision; the steps below are logged so the second
-        # spin isn't a surprise (no sensors are read while it runs).
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
-        shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
-        print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
-        _spin_90(motors, cfg, direction, imu)
-        print(f"    [u-turn] forward {cfg.LANE_WIDTH_CM:.0f}cm lane shift ({shift_s:.2f}s)")
-        _advance_one_lane(motors, cfg)
-        print(f"    [u-turn] spin {direction} {cfg.TURN_ANGLE_DEG:.0f}deg")
-        _spin_90(motors, cfg, direction, imu)
-        print("    [u-turn] done, resuming sensing")
+        _u_turn(motors, cfg, direction, imu, nav)
+    elif cmd.action is Action.DISPOSE:
+        _dispose(motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
         motors.stop()
 
@@ -133,6 +184,13 @@ def _format(readings):
         f"{name}={('--' if dist == float('inf') else f'{dist:5.1f}')}"
         for name, dist in readings.items()
     )
+
+
+def _log_status(nav, readings, yaw, cmd):
+    """One structured line per control tick: mode, pose, sensors, IMU, action."""
+    yaw_s = "--" if yaw is None else f"{yaw:6.1f}"
+    print(f"MODE={nav.mode.name:<9} | {nav.pose_str()} | {_format(readings)} "
+          f"| yaw={yaw_s} | {nav.collector} | -> {cmd.action.name:<10} ({cmd.reason})")
 
 
 def run_drive_test(motors, cfg, imu=None):
@@ -161,23 +219,45 @@ def run_drive_test(motors, cfg, imu=None):
 
 
 def run_navigation(motors, cfg, imu=None):
-    """Sensor-driven navigation loop."""
+    """IMU + odometry navigation loop with block disposal at the pit."""
     # Imported here so the drive-test mode never needs the sensor stack.
     from sensors import UltrasonicArray
 
     sensors = UltrasonicArray(cfg)
+    disposer = Disposer(cfg)
     nav = NavigationController(cfg)
     period = 1.0 / cfg.CONTROL_LOOP_HZ
+
+    # Zero the heading on the current facing so lane targets are start-relative.
+    nav.set_origin(imu.yaw() if imu is not None else None)
+
     turn_mode = "IMU heading" if (imu is not None and imu.available
                                   and cfg.USE_IMU_TURN) else f"timed {cfg.TURN_TIME_S}s"
-    print(f"USE_SENSORS = True -> navigation (hardware sensors: "
-          f"{sensors.using_hardware}, turns: {turn_mode})")
+    drive_mode = "wall-follow" if cfg.USE_WALL_FOLLOW else "IMU heading-hold"
+    print("=" * 78)
+    print("USE_SENSORS = True -> IMU + odometry navigation with disposal")
+    print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm")
+    print(f"  start pose    : ({cfg.START_X_CM:.0f}, {cfg.START_Y_CM:.0f}) cm, heading 0")
+    print(f"  pit           : ({cfg.PIT_X_CM:.0f}, {cfg.PIT_Y_CM:.0f}) cm, "
+          f"arrive within {cfg.PIT_ARRIVAL_RADIUS_CM:.0f} cm")
+    print(f"  collection cap: {cfg.COLLECTION_CAPACITY_BLOCKS} blocks")
+    print(f"  driving       : {drive_mode}   turns: {turn_mode}")
+    print(f"  sensors (hw)  : {sensors.using_hardware}   "
+          f"end-of-lane fallback < {cfg.FRONT_STOP_DISTANCE_CM:.0f} cm")
+    print("=" * 78)
+
+    last_t = time.monotonic()
     try:
         while True:
+            now = time.monotonic()
+            dt = now - last_t
+            last_t = now
+
             readings = sensors.read_all()
-            cmd = nav.decide(readings)
-            print(f"{_format(readings)} -> {cmd.action.name:<10} ({cmd.reason})")
-            execute(cmd, motors, cfg, imu)
+            yaw = imu.yaw() if imu is not None else None
+            cmd = nav.decide(readings, yaw, dt)
+            _log_status(nav, readings, yaw, cmd)
+            execute(cmd, motors, cfg, imu, nav, disposer)
             time.sleep(period)
     finally:
         sensors.cleanup()
@@ -186,8 +266,9 @@ def run_navigation(motors, cfg, imu=None):
 def main():
     cfg = config
     motors = MotorDriver(cfg)
-    # IMU is optional: if absent/disabled, IMU.available stays False and turns
-    # transparently fall back to the timed TURN_TIME_S spin.
+    # IMU is optional: if absent/disabled, IMU.available stays False, yaw()
+    # returns None, and turns fall back to the timed spin while driving stays
+    # open-loop straight (no heading-hold).
     imu = None
     if getattr(cfg, "USE_IMU_TURN", False):
         from imu import IMU

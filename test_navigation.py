@@ -1,10 +1,16 @@
 """
-Assertions for the turn logic. Runs with plain `python3 test_navigation.py`
-(no dependencies) and is also discoverable by pytest.
+Assertions for the IMU + odometry navigation logic. Runs with plain
+`python3 test_navigation.py` (no dependencies) and is also discoverable by pytest.
+
+The controller now decides from three inputs -- ultrasonic readings, IMU yaw, and
+elapsed dt -- so the helpers below default yaw/dt to a stationary tick (dt=0, so
+no odometry accumulates) unless a test drives time forward on purpose.
 """
 
+import types
+
 import config
-from navigation import NavigationController, Action
+from navigation import NavigationController, Action, Mode
 
 INF = float("inf")
 
@@ -25,108 +31,136 @@ def front_wall(dist, **kw):
     return reading(front_left=dist, front_center=dist, front_right=dist, **kw)
 
 
-def nav():
-    return NavigationController(config)
+def cfg_with(**overrides):
+    """A copy of config with a few values overridden (for isolated tests)."""
+    base = {k: getattr(config, k) for k in dir(config) if k.isupper()}
+    base.update(overrides)
+    return types.SimpleNamespace(**base)
+
+
+def nav(cfg=config):
+    n = NavigationController(cfg)
+    n.set_origin(0.0)  # IMU present, current facing = heading 0
+    return n
 
 
 # -- cruising ---------------------------------------------------------------
 
 def test_open_space_cruises_forward():
-    cmd = nav().decide(reading())
+    cmd = nav().decide(reading(), yaw=0.0, dt=0.0)
     assert cmd.action is Action.FORWARD
     assert cmd.speed == config.DRIVE_SPEED
 
 
+def test_on_heading_cruises_straight():
+    # Heading matches the lane target (0) -> no steering trim.
+    cmd = nav().decide(reading(front_center=150), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert abs(cmd.steer) < 1e-9
+
+
 def test_close_front_slows_but_keeps_going():
-    cmd = nav().decide(front_wall(config.FRONT_SLOW_DISTANCE_CM - 5,
-                                  right_front=18, right_rear=18))
+    cmd = nav().decide(front_wall(config.FRONT_SLOW_DISTANCE_CM - 5),
+                       yaw=0.0, dt=0.0)
     assert cmd.action is Action.FORWARD
     assert cmd.speed == config.SLOW_SPEED
 
 
-def test_too_far_from_wall_trims_right():
-    cmd = nav().decide(reading(front_center=150, right_front=40, right_rear=40))
-    assert cmd.action is Action.FORWARD
-    assert cmd.steer > 0  # positive = toward the wall (right)
+# -- IMU heading-hold trim --------------------------------------------------
+
+def test_heading_right_of_target_trims_left():
+    # Nose turned +10deg (to the right) -> steer left (negative) to come back.
+    cmd = nav().decide(reading(front_center=150), yaw=10.0, dt=0.0)
+    assert cmd.steer < 0
 
 
-def test_nose_angled_away_trims_right():
-    # front-right reads farther than rear-right -> nose pointed away from wall.
-    cmd = nav().decide(reading(front_center=150, right_front=24, right_rear=16))
+def test_heading_left_of_target_trims_right():
+    cmd = nav().decide(reading(front_center=150), yaw=-10.0, dt=0.0)
     assert cmd.steer > 0
 
 
-# -- trigger 1: wall straight ahead ----------------------------------------
-
-def test_first_turn_is_left():
-    # The serpentine schedule starts LEFT, regardless of the side readings.
-    cmd = nav().decide(reading(front_left=18, front_center=15, front_right=19,
-                               right_front=16, right_rear=16))
-    assert cmd.action is Action.TURN_LEFT
-
-
-def test_turn_direction_independent_of_right_side():
-    # Same first turn (LEFT) whether the right side is walled or wide open --
-    # direction comes from the schedule, not the sensors.
-    walled = nav().decide(front_wall(15, right_front=16, right_rear=16))
-    opened = nav().decide(front_wall(15, right_front=80, right_rear=80))
-    assert walled.action is Action.TURN_LEFT
-    assert opened.action is Action.TURN_LEFT
+def test_no_imu_drives_open_loop_straight():
+    n = NavigationController(config)
+    n.set_origin(None)  # no IMU heading available
+    cmd = n.decide(reading(front_center=150), yaw=None, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert cmd.steer == 0.0
 
 
-# -- front sensors must agree (one drifting sensor is ignored) --------------
+# -- trigger: odometry end-of-lane (no sensor input at all) -----------------
+
+def test_odometry_turns_at_end_of_lane():
+    # Pit parked far away so only the odometry end-of-lane trigger is exercised.
+    n = nav(cfg_with(PIT_X_CM=-10000.0, PIT_Y_CM=-10000.0))
+    cmd = None
+    # Drive forward in open space; distance accumulates until the lane is done.
+    for _ in range(40):
+        cmd = n.decide(reading(), yaw=0.0, dt=1.0)
+        if cmd.action is not Action.FORWARD:
+            break
+    assert cmd.action is Action.TURN_RIGHT
+    assert "odometry" in cmd.reason
+    assert n.lane_distance >= n.cfg.ARENA_LENGTH_CM - n.cfg.LANE_END_MARGIN_CM
+
+
+# -- fallback trigger: wall straight ahead ----------------------------------
+
+def test_front_wall_fallback_turns_right_first():
+    # From the bottom-left corner the serpentine starts RIGHT; a close front wall
+    # forces the turn.
+    cmd = nav().decide(front_wall(15), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.TURN_RIGHT
+    assert "FALLBACK" in cmd.reason
+
 
 def test_single_drifting_front_sensor_is_ignored():
-    # One sensor reads a close wall, the other two see open space -> no turn.
     stop = config.FRONT_STOP_DISTANCE_CM
     cmd = nav().decide(reading(front_left=stop - 10, front_center=200,
-                               front_right=200))
+                               front_right=200), yaw=0.0, dt=0.0)
     assert cmd.action is Action.FORWARD
 
 
 def test_single_dropout_does_not_hide_a_real_wall():
-    # One sensor drops out (inf) but the other two agree on a wall -> still turn.
     stop = config.FRONT_STOP_DISTANCE_CM
     cmd = nav().decide(reading(front_left=stop - 10, front_center=stop - 8,
-                               front_right=INF))
-    assert cmd.action is Action.TURN_LEFT
+                               front_right=INF), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.TURN_RIGHT
 
 
-def test_two_agreeing_front_sensors_trigger_turn():
-    stop = config.FRONT_STOP_DISTANCE_CM
-    cmd = nav().decide(reading(front_left=stop - 10, front_center=stop - 8,
-                               front_right=200))
-    assert cmd.action is Action.TURN_LEFT
-
-
-# -- right side never triggers a turn (no obstacles in a bare rectangle) ----
-
-def test_right_wall_present_still_cruises():
-    # A wall on the right is normal lane-following, never a turn on its own.
-    cmd = nav().decide(reading(front_center=150, right_front=18, right_rear=18))
-    assert cmd.action is Action.FORWARD
-
-
-def test_right_wall_dropping_away_still_cruises():
-    # Even a sharp right-side discontinuity must not turn the car: in a closed
-    # rectangle this can't be a corner, and we have no obstacles.
-    cmd = nav().decide(reading(front_center=150, right_front=120, right_rear=16))
-    assert cmd.action is Action.FORWARD
-
-
-def test_fully_open_right_cruises():
-    cmd = nav().decide(reading(front_center=150, right_front=INF, right_rear=INF))
-    assert cmd.action is Action.FORWARD
-
-
-# -- route stub: serpentine alternation ------------------------------------
-
-def test_serpentine_turns_alternate_left_first():
+def test_serpentine_turns_alternate_right_first():
     n = nav()
-    # Each end wall flips the turn direction, starting LEFT: L, R, L, R, ...
-    turns = [n.decide(front_wall(15)).action for _ in range(4)]
-    assert turns == [Action.TURN_LEFT, Action.TURN_RIGHT,
-                     Action.TURN_LEFT, Action.TURN_RIGHT]
+    turns = [n.decide(front_wall(15), yaw=0.0, dt=0.0).action for _ in range(4)]
+    assert turns == [Action.TURN_RIGHT, Action.TURN_LEFT,
+                     Action.TURN_RIGHT, Action.TURN_LEFT]
+
+
+# -- disposal: pit arrival --------------------------------------------------
+
+def test_pit_arrival_triggers_dispose():
+    n = nav()
+    n.x, n.y = config.PIT_X_CM, config.PIT_Y_CM  # place the car at the pit
+    cmd = n.decide(reading(), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.DISPOSE
+    assert n.mode is Mode.DISPOSING
+
+
+def test_dispose_does_not_retrigger_until_leaving_pit():
+    n = nav()
+    n.x, n.y = config.PIT_X_CM, config.PIT_Y_CM
+    assert n.decide(reading(), yaw=0.0, dt=0.0).action is Action.DISPOSE
+    n.complete_dispose()  # main.py would run the dump, then this
+    # Still inside the pit radius -> must NOT dispose again immediately.
+    assert n.decide(reading(), yaw=0.0, dt=0.0).action is not Action.DISPOSE
+
+
+# -- legacy wall-follow (only when explicitly enabled) ----------------------
+
+def test_wall_follow_trims_toward_far_wall_when_enabled():
+    n = nav(cfg_with(USE_WALL_FOLLOW=True))
+    cmd = n.decide(reading(front_center=150, right_front=40, right_rear=40),
+                   yaw=0.0, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert cmd.steer > 0  # too far from the right wall -> steer toward it
 
 
 def _run():

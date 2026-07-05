@@ -1,17 +1,21 @@
 """
-Off-hardware simulation of the turn logic.
+Off-hardware simulation of the IMU + odometry navigation.
 
-Feeds the NavigationController a scripted sequence of sensor readings that walks
-the car down a lane, into a wall straight ahead, and past a convex corner on its
-right, printing the decision at every step. Run with:
+Drives the NavigationController through open space (no walls in sensor range) so
+the run is entirely IMU/odometry driven: the car cruises down a lane, turns from
+odometry at the arena length, then reaches a (demo) pit and disposes. Emulates
+main.py by feeding the "true" heading back as the IMU yaw and by calling
+complete_turn()/complete_dispose() after those maneuvers. Run with:
 
     python3 simulate.py
 
-This is the quickest way to eyeball that the two turn triggers fire correctly.
+The pit is placed for the demo so the car reaches it after one U-turn.
 """
 
+import types
+
 import config
-from navigation import NavigationController
+from navigation import NavigationController, Action
 
 INF = float("inf")
 
@@ -27,45 +31,40 @@ def reading(front_left=INF, front_center=INF, front_right=INF,
     }
 
 
-# A scripted run. Each entry is (label, readings).
-SCENARIO = [
-    ("cruise, tracking right wall",
-     reading(front_center=150, right_front=18, right_rear=18)),
-
-    ("drifting away from right wall (should trim right)",
-     reading(front_center=120, right_front=30, right_rear=26)),
-
-    ("nose angled toward wall (should trim left)",
-     reading(front_center=100, right_front=12, right_rear=20)),
-
-    ("wall getting close ahead (should slow)",
-     reading(front_center=35, right_front=18, right_rear=18)),
-
-    ("WALL STRAIGHT AHEAD (first end-of-lane turn -> LEFT)",
-     reading(front_left=18, front_center=15, front_right=19,
-             right_front=16, right_rear=16)),
-
-    ("cruise along the next lane",
-     reading(front_center=150, right_front=18, right_rear=18)),
-
-    ("WALL STRAIGHT AHEAD again (alternates -> RIGHT)",
-     reading(front_center=15, right_front=18, right_rear=18)),
-
-    ("right wall drops away (NOT a turn in a bare rectangle -> keep cruising)",
-     reading(front_center=150, right_front=120, right_rear=18)),
-
-    ("open arena, no walls in range (cruise straight)",
-     reading()),
-]
+def cfg_demo():
+    """Config copy with a pit placed to be reached after one U-turn (see below)."""
+    base = {k: getattr(config, k) for k in dir(config) if k.isupper()}
+    # After the first right U-turn from the start lane the car is at x ~= START+35,
+    # heading 180, driving back down; put the pit there so the demo disposes.
+    base.update(PIT_X_CM=config.START_X_CM + config.LANE_WIDTH_CM,
+                PIT_Y_CM=130.0)
+    return types.SimpleNamespace(**base)
 
 
 def main():
-    nav = NavigationController(config)
-    for label, readings in SCENARIO:
-        cmd = nav.decide(readings)
-        extra = f" steer={cmd.steer:+.2f}" if cmd.action.name == "FORWARD" else ""
-        print(f"{label}\n    -> {cmd.action.name:<10} speed={cmd.speed:.2f}{extra}"
-              f"  [{cmd.reason}]\n")
+    cfg = cfg_demo()
+    nav = NavigationController(cfg)
+    nav.set_origin(0.0)
+    heading = 0.0  # the sim's "true" heading, fed back as the IMU yaw each tick
+    dt = 0.2
+
+    print(f"arena {cfg.ARENA_WIDTH_CM:.0f}x{cfg.ARENA_LENGTH_CM:.0f}  "
+          f"start ({cfg.START_X_CM:.0f},{cfg.START_Y_CM:.0f})  "
+          f"pit ({cfg.PIT_X_CM:.0f},{cfg.PIT_Y_CM:.0f})\n")
+
+    for step in range(200):
+        cmd = nav.decide(reading(), yaw=heading, dt=dt)
+        extra = f" steer={cmd.steer:+.2f}" if cmd.action is Action.FORWARD else ""
+        print(f"{step:3d} MODE={nav.mode.name:<9} {nav.pose_str()} "
+              f"-> {cmd.action.name:<10}{extra}  [{cmd.reason}]")
+
+        if cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
+            nav.complete_turn()          # main.py runs the blocking U-turn here
+            heading = nav.target_heading  # the car now physically faces the new lane
+        elif cmd.action is Action.DISPOSE:
+            nav.complete_dispose()        # main.py runs the dump here
+            print("\n--> reached the pit and disposed; sweep would resume.")
+            break
 
 
 if __name__ == "__main__":

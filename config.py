@@ -12,10 +12,51 @@ ROBOT_WIDTH_CM = 50.0         # physical width of the car
 # once it exceeds the car width).
 LANE_WIDTH_CM = 35.0
 
-# Measured forward travel speed at DRIVE_SPEED, in cm/s. Used to convert the
-# lane-width shift into an open-loop drive time. MEASURE THIS on the real car
-# (drive forward at DRIVE_SPEED for a known time, divide distance by time).
+# Measured forward travel speed at DRIVE_SPEED, in cm/s. Used both to convert the
+# lane-width shift into an open-loop drive time AND for dead-reckoning odometry
+# (distance-along-lane = DRIVE_CM_PER_S * time). MEASURE THIS ACCURATELY on the
+# real car (drive forward at DRIVE_SPEED for a known time, divide distance by
+# time) -- odometry-based turning and pit arrival both depend on it.
 DRIVE_CM_PER_S = 30.0
+
+# ---------------------------------------------------------------------------
+# Start pose and coordinate frame.
+#   The car starts in the BOTTOM-LEFT corner, facing along the arena length. We
+#   work in a "start-relative" frame: at startup the current IMU yaw is recorded
+#   as heading 0 (the initial facing), and (START_X_CM, START_Y_CM) is where the
+#   car begins. +y is straight ahead (up the first lane, along ARENA_LENGTH_CM),
+#   +x is to the car's right (across ARENA_WIDTH_CM). Odometry integrates motion
+#   in this frame; keep the physical placement consistent with these values.
+# ---------------------------------------------------------------------------
+START_X_CM = 0.0                    # bottom-left corner, left edge
+START_Y_CM = 0.0                    # bottom-left corner, start wall
+
+# Serpentine sweep direction. From the bottom-left corner facing +y, the first
+# U-turn at the far wall must curl RIGHT so each lane steps +x across the arena
+# (then it alternates right/left/right/... for a full-width snake).
+SERPENTINE_FIRST_TURN = "right"     # "right" from bottom-left, "left" from bottom-right
+
+# ---------------------------------------------------------------------------
+# Disposal pit (known fixed location, in the start-relative frame above).
+#   The car sweeps the arena and, when its pose comes within
+#   PIT_ARRIVAL_RADIUS_CM of (PIT_X_CM, PIT_Y_CM), it enters DISPOSING: it
+#   rotates so its BACK faces the pit (waste-truck style) and dumps.
+#   SET THESE to the real pit location for the competition arena.
+# ---------------------------------------------------------------------------
+PIT_X_CM = ARENA_WIDTH_CM / 2.0     # TODO: real pit centre X (placeholder: arena middle)
+PIT_Y_CM = ARENA_LENGTH_CM          # TODO: real pit centre Y (placeholder: far wall)
+PIT_ARRIVAL_RADIUS_CM = 30.0        # how close (cm) to the pit centre counts as "arrived"
+DISPOSE_BACK_INTO_PIT = True        # True = orient back toward the pit before dumping
+DISPOSE_HOLD_S = 2.0                # placeholder dwell while "dumping" (until servo lands)
+
+# ---------------------------------------------------------------------------
+# Collection (future servo).
+#   The collection servo will report how many blocks are in the bucket; when it
+#   reaches COLLECTION_CAPACITY_BLOCKS the bucket is "full". For now the count is
+#   a stub (see actuators.Collector) and disposal triggers purely on reaching the
+#   pit -- wiring is a one-line change once the servo exists.
+# ---------------------------------------------------------------------------
+COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes from the collection servo later
 
 # ---------------------------------------------------------------------------
 # Ultrasonic sensor layout.
@@ -42,12 +83,16 @@ RIGHT_SENSORS = ("right_front", "right_rear")
 
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
+#   End-of-lane is now decided by ODOMETRY (distance driven vs ARENA_LENGTH_CM,
+#   see LANE_END_MARGIN_CM below). The FRONT_* ultrasonic thresholds are the
+#   SAFETY FALLBACK: if a wall shows up closer than expected (odometry drift, an
+#   unexpected obstacle) they force the turn early so we never drive into it.
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 40.0    # wall this close ahead -> end of lane, must turn
+FRONT_STOP_DISTANCE_CM = 40.0    # FALLBACK: wall this close ahead -> turn now, even if odometry disagrees
 FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
 # NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
 RIGHT_WALL_DISTANCE_CM = 25.0    # closer than this => a wall is present on the right
-RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall while wall-following
+RIGHT_TARGET_DISTANCE_CM = 18.0  # desired gap to the right wall (only used if USE_WALL_FOLLOW)
 
 # ---------------------------------------------------------------------------
 # Sensor reliability / read settings.
@@ -64,8 +109,27 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 DRIVE_SPEED = 0.6                # nominal forward speed (0..1)
 SLOW_SPEED = 0.4                 # forward speed when an obstacle is getting close
 TURN_SPEED = 0.2                 # in-place rotation speed
-STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall
+STEER_CORRECTION_GAIN = 0.015    # how hard to trim heading against the right wall (wall-follow only)
 MAX_STEER_TRIM = 0.4             # clamp on the wall-follow steering trim
+
+# ---------------------------------------------------------------------------
+# Straight-line driving: IMU heading-hold (primary) vs right-wall follow (legacy).
+#   While DRIVING, the car cruises forward and trims its steering to hold the
+#   lane's target heading using the IMU, instead of following the right wall.
+#   HEADING_HOLD_GAIN turns a heading error (deg) into a steer trim; the result
+#   is clamped to +/-MAX_HEADING_TRIM. Positive steer = toward the car's right.
+# ---------------------------------------------------------------------------
+USE_WALL_FOLLOW = False           # False = IMU heading-hold (default), True = legacy right-wall trim
+HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
+MAX_HEADING_TRIM = 0.4            # clamp on the heading-hold steering trim
+
+# ---------------------------------------------------------------------------
+# Odometry-based end-of-lane.
+#   Distance driven down the current lane is integrated from DRIVE_CM_PER_S; once
+#   it reaches ARENA_LENGTH_CM - LANE_END_MARGIN_CM the car turns (the ultrasonic
+#   front stop is only a fallback for when a wall appears sooner than expected).
+# ---------------------------------------------------------------------------
+LANE_END_MARGIN_CM = 40.0         # turn this far before the far wall (odometry trigger)
 
 # Seconds to rotate 90 degrees in place at TURN_SPEED. Used as the FALLBACK when
 # no IMU is available (see USE_IMU_TURN below). Measure it on the actual car.
