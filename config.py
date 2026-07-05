@@ -266,8 +266,8 @@ IMU_TURN_BOOST_FACTOR = 1.4      # multiply TURN_SPEED by this when stalled
 #   of swapping wires if a wheel spins the wrong way.
 # ---------------------------------------------------------------------------
 MOTORS = {
-    "left":  {"dir": 16, "pwm": 12, "invert": True},
-    "right": {"dir": 20, "pwm": 13, "invert": True},
+    "left":  {"dir": 20, "pwm": 13, "invert": True},
+    "right": {"dir": 16, "pwm": 12, "invert": True},
 }
 MOTOR_PWM_HZ = 1000              # PWM frequency on the speed pins
 MOTOR_DEADZONE = 0.05            # |side command| below this counts as stop

@@ -189,8 +189,10 @@ The car spins at `TURN_SPEED` for `TURN_TIME_S` seconds and hopes that's 90°.
 Simple, no IMU, but you must **measure `TURN_TIME_S`** and it drifts with battery.
 For early bring-up only.
 
-> The sideways lane shift (step 2 of the U-turn) is **always** open-loop timed as
-> `LANE_WIDTH_CM / DRIVE_CM_PER_S` seconds. Both numbers must be measured.
+> The sideways lane shift (step 2 of the U-turn) is open-loop timed as
+> `LANE_WIDTH_CM / DRIVE_CM_PER_S` seconds. It needn't be precise — lane counting
+> handles *which* lane, and the coverage overlap (`LANE_WIDTH_CM < ROBOT_WIDTH_CM`)
+> absorbs a slightly short/long step.
 
 ---
 
@@ -449,7 +451,7 @@ The U-turn and disposal maneuvers add their own `[u-turn] ...`, `[orient] ...`,
 | `PIT_ARRIVAL_RADIUS_CM` | Keep **≥ `FRONT_STOP_DISTANCE_CM`**, or the car never reaches the pit. |
 | `SIDE_SENSOR_OFFSET_CM` | Only if you enable the side sensors: ≈ half the car width; set so an edge lane's measured `x` matches its nominal `x`. |
 
-_Not yet implemented: the servos (`Collector`/`Disposer` are log-only — disposal fires on pit arrival, not "bucket full"), and the sideways lane shift is still open-loop timed._
+_Not yet implemented: the servos — `Collector`/`Disposer` are log-only, so disposal fires on pit arrival rather than "bucket full"._
 
 ```
 
