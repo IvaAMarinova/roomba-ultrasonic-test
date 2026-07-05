@@ -116,8 +116,8 @@ SENSORS = {
     "left_front":   {"trig": 19, "echo": 21, "enabled": False},  # left, toward front
     "left_rear":    {"trig": 7,  "echo": 8,  "enabled": False},  # left, toward rear
     # Back -- disabled for now (future: reverse / disposal assistance).
-    "back_left":    {"trig": 1,  "echo": 25, "enabled": False},  # back, left
-    "back_right":   {"trig": 7, "echo": 8, "enabled": False},  # back, right
+    "back_left":    {"trig": 1,  "echo": 25, "enabled": True},  # back, left
+    "back_right":   {"trig": 7, "echo": 8, "enabled": True},  # back, right
 }
 
 # Logical groupings used by the navigation logic.
