@@ -18,16 +18,11 @@ INF = float("inf")
 
 
 def reading(front_left=INF, front_center=INF, front_right=INF,
-            right_front=INF, right_rear=INF,
-            left_front=INF, left_rear=INF, back_left=INF, back_right=INF):
+            back_left=INF, back_right=INF):
     return {
         "front_left": front_left,
         "front_center": front_center,
         "front_right": front_right,
-        "right_front": right_front,
-        "right_rear": right_rear,
-        "left_front": left_front,
-        "left_rear": left_rear,
         "back_left": back_left,
         "back_right": back_right,
     }
@@ -219,47 +214,8 @@ def test_lane_index_sets_cross_lane_x():
     assert n.x == config.START_X_CM
     n.complete_turn()                        # steps one lane sideways (persistent x)
     assert abs(n.x - (config.START_X_CM + config.LANE_WIDTH_CM)) < 1e-9
-    n.decide(reading(), yaw=0.0, dt=0.0)     # no side wall -> x unchanged
+    n.decide(reading(), yaw=0.0, dt=0.0)     # x is lane-counted only -> unchanged by a tick
     assert abs(n.x - (config.START_X_CM + config.LANE_WIDTH_CM)) < 1e-9
-
-
-# -- side-wall edge re-zero of cross-lane x ---------------------------------
-
-def side_cfg(**kw):
-    # Self-consistent physical frame: start hugging the left wall (x = offset).
-    base = dict(SIDE_SENSOR_OFFSET_CM=25.0, START_X_CM=25.0, LANE_WIDTH_CM=35.0,
-                PIT_X_CM=-1e4, PIT_Y_CM=-1e4)
-    base.update(kw)
-    return cfg_with(**base)
-
-
-def test_side_wall_rezeros_x_near_edge():
-    n = nav(side_cfg())                      # lane 0, nominal x = 25
-    cmd = n.decide(reading(left_front=10, left_rear=10), yaw=0.0, dt=0.0)
-    assert cmd.action is Action.FORWARD
-    assert n.x_source == "WALL"
-    assert abs(n.x - (10 + 25)) < 1e-9       # gap 10 + offset 25
-
-
-def test_far_side_wall_is_ignored():
-    n = nav(side_cfg())
-    # A side wall beyond SIDE_WALL_TRUST_CM (middle lane) -> no re-zero.
-    n.decide(reading(left_front=90, left_rear=90), yaw=0.0, dt=0.0)
-    assert n.x_source == "LANE"
-
-
-def test_side_block_disagreement_is_ignored():
-    n = nav(side_cfg())
-    # The two side sensors disagree (a block on one) -> not a wall, no re-zero.
-    n.decide(reading(left_front=10, left_rear=40), yaw=0.0, dt=0.0)
-    assert n.x_source == "LANE"
-
-
-def test_side_reading_far_from_prior_is_ignored():
-    n = nav(side_cfg())                      # nominal x = 25
-    # Both agree and are close, but imply x way off the lane prior -> reject (block).
-    n.decide(reading(left_front=60, left_rear=60), yaw=0.0, dt=0.0)  # x=85, prior 25
-    assert n.x_source == "LANE"
 
 
 # -- disposal: pit arrival --------------------------------------------------

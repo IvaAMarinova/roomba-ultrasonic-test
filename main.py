@@ -204,11 +204,12 @@ def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading,
                    stop_distance=None):
     """Turn to `target_heading`, then drive (slow, heading-held) toward a wall.
 
-    Stops when a believed front wall is within `stop_distance` (default the normal
+    Stops when a believed FRONT wall is within `stop_distance` (default the normal
     FRONT_STOP standoff), or a safety timeout (~2 arena lengths) elapses so it can
-    never drive forever. Wall-referenced, so it lands at a consistent gap regardless
-    of how far it had to go -- pass a larger stop_distance to stop the car at a known
-    distance FROM a wall (e.g. to reach the pit's middle off the far side wall).
+    never drive forever. Front-wall-referenced (the car turns to face whichever wall
+    it wants and reads it with the front sensors), so it lands at a consistent gap
+    regardless of how far it had to go -- pass a larger stop_distance to stop the car
+    at a known distance FROM a wall (e.g. to reach the pit's middle off the far wall).
     """
     if stop_distance is None:
         stop_distance = cfg.FRONT_STOP_DISTANCE_CM
@@ -235,10 +236,10 @@ def _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
     """After the sweep: go back to the pit (mid start wall) and dump the remainder.
 
     The pit is in the MIDDLE of the start wall (y=0), where no wall marks its
-    sideways position -- so we reference the side wall and measure across:
+    sideways position -- so we reach the left/right walls with the FRONT sensors
+    (turning to face each) and measure across:
       1. Drive to the start wall (the pit's side), wherever the sweep ended.
-      2. Drive to the LEFT side wall (exact x), then drive PIT_X across to the pit's
-         middle.
+      2. Drive to the LEFT wall (exact x), then drive PIT_X across to the pit's middle.
       3. Face the start wall so the back points at the pit, reverse in, and dump.
     """
     print("[return] coverage complete -> returning to the pit for the final dump")
@@ -250,7 +251,7 @@ def _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
     # 2) To the pit's middle -- fully front-wall-referenced (no odometry):
     #    go to the left wall, then face +x and drive until the FAR (right) wall is
     #    (WIDTH - PIT_X) away, which puts the car at x = PIT_X.
-    print("[return] leg 2a: drive to the left wall")
+    print("[return] leg 2a: face -x, drive to the left wall (front sensors)")
     _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
     print("[return] leg 2b: face +x, drive until the right wall marks the pit's middle")
     _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=90.0,

@@ -93,27 +93,25 @@ FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 
 # ---------------------------------------------------------------------------
 # Ultrasonic sensor layout.
-#   9x HC-SR04 positions: 3 front, 2 right, 2 left, 2 back.
+#   5x HC-SR04 positions: 3 front, 2 back. (No side sensors -- localisation uses
+#   the FRONT wall for position + the IMU for heading; there is no side-wall logic.)
 #   Each entry: logical name -> {TRIG pin, ECHO pin, enabled} in BCM numbering.
 #   Adjust the pin numbers to match your wiring.
 #   "enabled": False -> that sensor is never read (its GPIO is left untouched)
 #   and its distance always reports as "no echo". Use it to bring sensors up one
 #   at a time, or to ignore one that isn't wired / is faulty.
 #
-#   FOR NOW ONLY THE 3 FRONT SENSORS ARE ENABLED. The side/back positions are
-#   wired into config (pins reserved) but switched off; flip "enabled": True as
-#   you bring them up. The nav logic only reads the FRONT sensors today, so the
-#   others are inert until code uses their groupings (back sensors are earmarked
-#   for future reverse/disposal assistance).
-#
 #   The 3 FRONT sensors are the PRIMARY position reference (distance to the end
-#   wall = how far down the lane we are). Mount them:
+#   wall = how far down the lane we are), used both during the sweep and when
+#   driving up to the walls on the return-to-pit phase. Mount them:
 #     * spread edge-to-edge across the front (left-edge / center / right-edge) and
 #       OUTBOARD of the collection bucket, so no sensor stares into its own scoop
 #       and the outer pair gives a wide "is it a full wall or just a block?" baseline,
 #     * LEVEL, aimed straight ahead, and at a height ABOVE the blocks but BELOW the
 #       top of the arena walls -- high enough that low blocks/bumps are not seen, but
 #       not so high the beam shoots over a low wall and misses it.
+#   The 2 BACK sensors are earmarked for future reverse / disposal assistance
+#   (backing the rear over the small pit); the nav logic does not read them yet.
 # ---------------------------------------------------------------------------
 # NOTE: pins 12, 13, 16, 20 are used by the motors (see MOTORS below) and 2, 3 by
 # the IMU's I2C, so the sensors are wired clear of them. Every ENABLED sensor must
@@ -123,21 +121,13 @@ SENSORS = {
     "front_left":   {"trig": 23, "echo": 24, "enabled": True},   # left edge, outboard of bucket
     "front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
     "front_right":  {"trig": 6,  "echo": 5,  "enabled": True},   # right edge, outboard of bucket
-    # Right side -- disabled for now.
-    "right_front":  {"trig": 17, "echo": 4,  "enabled": False},  # right, toward front
-    "right_rear":   {"trig": 26, "echo": 25, "enabled": False},  # right, toward rear (trig was 22: clashed with front_center echo)
-    # Left side -- disabled for now.
-    "left_front":   {"trig": 19, "echo": 21, "enabled": False},  # left, toward front
-    "left_rear":    {"trig": 7,  "echo": 8,  "enabled": False},  # left, toward rear
-    # Back -- disabled for now (future: reverse / disposal assistance).
-    "back_left":    {"trig": 1,  "echo": 25, "enabled": True},  # back, left
-    "back_right":   {"trig": 7, "echo": 8, "enabled": True},  # back, right
+    # Back -- future: reverse / disposal assistance.
+    "back_left":    {"trig": 1,  "echo": 25, "enabled": True},   # back, left
+    "back_right":   {"trig": 7,  "echo": 8,  "enabled": True},   # back, right
 }
 
 # Logical groupings used by the navigation logic.
 FRONT_SENSORS = ("front_left", "front_center", "front_right")
-RIGHT_SENSORS = ("right_front", "right_rear")
-LEFT_SENSORS = ("left_front", "left_rear")
 BACK_SENSORS = ("back_left", "back_right")
 
 # ---------------------------------------------------------------------------
@@ -172,24 +162,12 @@ WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall a
 WALL_PERSIST_TICKS = 3           # consecutive ticks the wall-stop must hold before turning
 
 # ---------------------------------------------------------------------------
-# Side-wall cross-lane (x) correction -- EDGE RE-ZERO.
-#   Cross-lane x normally comes from lane counting (open-loop: it assumes each
-#   U-turn shifted exactly LANE_WIDTH). In the OUTER lanes a side wall is close
-#   enough to measure reliably, so when BOTH sensors on the nearer side agree and
-#   read within SIDE_WALL_TRUST_CM, the car re-zeros x to that wall -- correcting
-#   accumulated lane-shift drift. Ignored in middle lanes (wall too far) and if
-#   the reading disagrees with the lane-counting prior by more than
-#   SIDE_EXPECT_TOL_CM (rejects a block). NO-OP while the side sensors are disabled.
+# Cross-lane (x) position.
+#   x comes purely from LANE COUNTING: x = START_X + sweep_sign * lane_index *
+#   LANE_WIDTH, stepped one lane per U-turn. There is no side-wall correction --
+#   staying centred in the lane is the IMU heading-hold's job (it keeps the car
+#   square so each straight run and each 90-degree turn tracks the lane geometry).
 # ---------------------------------------------------------------------------
-SIDE_WALL_TRUST_CM = 70.0        # only trust a side wall nearer than this (i.e. an edge lane)
-SIDE_EXPECT_TOL_CM = 25.0        # measured x must be within this of the lane-counting prior
-# Maps a measured wall GAP to the frame's x: measured_x = gap + this (left wall),
-# or ARENA_WIDTH - gap - this (right wall). It's the distance from the car's x
-# reference point to its side sensor face -- about half the car width. CALIBRATE so
-# that in an edge lane the measured x matches that lane's nominal (lane# * LANE_WIDTH
-# + START_X); START_X_CM / PIT_X_CM must be in the same physical frame for the
-# re-zero to be consistent. Only matters once the side sensors are enabled.
-SIDE_SENSOR_OFFSET_CM = ROBOT_WIDTH_CM / 2.0
 
 # ---------------------------------------------------------------------------
 # Sensor reliability / read settings.

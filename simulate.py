@@ -25,7 +25,7 @@ def reading(front):
     """Three front sensors all seeing `front` (INF if the wall is out of range)."""
     return {
         "front_left": front, "front_center": front, "front_right": front,
-        "right_front": INF, "right_rear": INF,
+        "back_left": INF, "back_right": INF,
     }
 
 

@@ -58,7 +58,7 @@ Each coordinate has a **slip-immune** source:
 | Quantity           | Source                                                                                                                                   | Bumps affect it?     |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | **heading**        | IMU yaw                                                                                                                                  | no                   |
-| **cross-lane `x`** | lane counting (`x += sweep × LANE_WIDTH` per U-turn), **re-zeroed off a side wall in the outer lanes** when the side sensors are enabled | no                   |
+| **cross-lane `x`** | lane counting (`x += sweep × LANE_WIDTH` per U-turn); the IMU heading-hold keeps the car square so it stays centred in the lane | no                   |
 | **along-lane `y`** | **front wall**: `y` derived from the measured gap to the end wall                                                                        | no                   |
 | _(fallback)_       | wheel-time odometry `DRIVE_CM_PER_S × time` — only bridges brief gaps                                                                    | yes, but rarely used |
 
@@ -288,20 +288,18 @@ Grouped the same way as in the file.
 ### 5.5 Sensors (`SENSORS` dict + groupings)
 
 Each sensor is `name: {"trig": <pin>, "echo": <pin>, "enabled": <bool>}` in **BCM**.
-The array has **9 positions — 3 front, 2 right, 2 left, 2 back — but only the 3
-front are `enabled`**; the rest are wired into config (pins reserved) and switched
-off until you bring them up. Only the front sensors are read by the nav today.
+The array has **5 positions — 3 front, 2 back**. There are **no side sensors**:
+localisation uses the front wall for position and the IMU for heading, so there is
+no side-wall logic. Only the front sensors are read by the nav today; the back pair
+is earmarked for future reverse/disposal assistance.
 
 - **`trig` / `echo`** — match your wiring; keep clear of the motor pins (`12, 13, 16,
 20`) and the IMU I2C pins (`2, 3`). Every **enabled** sensor needs unique pins.
 - **`enabled`** — `False` leaves that sensor's pins untouched and it always reports
-  "no echo". Flip to `True` as you bring each up. (The `right_*`/`left_*`/`back_*`
-  positions default to `False`.)
+  "no echo". Flip to `True` as you bring each up.
 - **Groupings** — **`FRONT_SENSORS`** (the primary position reference; mount spread
-  edge-to-edge, outboard of the bucket, level, above block height — see `config.py`),
-  **`LEFT_SENSORS`** / **`RIGHT_SENSORS`** (enable to get the **edge re-zero of `x`**
-  — §5.7; mount level/above blocks, aimed square at the side walls), and
-  **`BACK_SENSORS`** (reserved; earmarked for reverse/disposal assistance).
+  edge-to-edge, outboard of the bucket, level, above block height — see `config.py`)
+  and **`BACK_SENSORS`** (reserved; earmarked for reverse/disposal assistance).
 
 ### 5.6 Decision thresholds (centimetres)
 
@@ -322,15 +320,8 @@ These gate when a close front reading is believed to be the **end wall** (see §
 | `WALL_EXPECT_TOL_CM`    | How far the odometry prior may disagree with the measured wall and still trust it. **Generous** (odometry is rough); too tight rejects real walls after drift, too loose lets a wide mid-lane object be called the lane end. |
 | `WALL_PERSIST_TICKS`    | Consecutive ticks a close wall must hold before turning (kills single-frame glitches).                                                                                                                                       |
 
-**Side-wall edge re-zero of `x`** (only active when the `left_*`/`right_*` sensors are
-enabled — no-op otherwise). In the outer lanes a side wall is close enough to trust,
-so `x` is re-anchored to it, correcting open-loop lane-shift drift:
-
-| Setting                 | What it does                                                                                                                                                                                       |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SIDE_WALL_TRUST_CM`    | Only trust a side wall nearer than this (i.e. an edge lane); farther walls (middle lanes) are ignored.                                                                                             |
-| `SIDE_EXPECT_TOL_CM`    | The measured `x` must be within this of the lane-counting prior, else it's treated as a block and ignored.                                                                                         |
-| `SIDE_SENSOR_OFFSET_CM` | Maps a wall **gap** to frame `x` (≈ half the car width). **Calibrate** so an edge lane's measured `x` matches its nominal `x`; `START_X_CM` / `PIT_X_CM` must be real distances in the same frame. |
+Cross-lane `x` has **no sensor correction** — it comes purely from lane counting,
+and the IMU heading-hold keeps the car square so it stays centred in each lane.
 
 ### 5.8 Straight-line driving
 
@@ -397,14 +388,13 @@ whether real sensor hardware was found.
 Then **every control tick** it prints one status line:
 
 ```
-MODE=DRIVING   | pos=(  35.0, 156.0) hdg=-180.0 tgt=-180.0 lane#1 ld=144.0 y_src=WALL   x_src=LANE wall=144.0(x3) | front_left=144.0 ... | yaw= -179.8 | blocks=0/10 | -> FORWARD    (cruising)
+MODE=DRIVING   | pos=(  35.0, 156.0) hdg=-180.0 tgt=-180.0 lane#1 ld=144.0 y_src=WALL   wall=144.0(x3) | front_left=144.0 ... | yaw= -179.8 | blocks=0/10 | -> FORWARD    (cruising)
 ```
 
 - **MODE** — DRIVING / TURNING / DISPOSING.
 - **pos / hdg / tgt** — estimated position, current & target heading.
-- **lane# / ld** — lane index (→ cross-lane `x`) and along-lane distance.
+- **lane# / ld** — lane index (→ cross-lane `x`, lane-counted) and along-lane distance.
 - **y_src** — where along-lane `y` came from: `WALL` (believed wall) or `BRIDGE` (odometry).
-- **x_src** — where cross-lane `x` came from: `WALL` (re-zeroed off a side wall) or `LANE` (lane counting).
 - **wall=NN(xK)** — believed wall distance and how many front sensors agreed (`--` = none).
 - **sensors** — every raw ultrasonic distance (`--` = no echo / out of range).
 - **yaw** — raw IMU heading (`--` if no IMU this tick). **blocks** — collector count / capacity.
@@ -449,9 +439,9 @@ The U-turn and disposal maneuvers add their own `[u-turn] ...`, `[orient] ...`,
 | `DISPOSE_REVERSE_CM` | Tune at the pit so the rear **overhangs but the drive wheels stay on the edge** (no rear sensor — this one can drop a wheel in). |
 | `SERPENTINE_FIRST_TURN` | Bench-check a right turn steps the car `+x` (into the arena); flip it if your IMU yaw runs the other way. |
 | `PIT_ARRIVAL_RADIUS_CM` | Keep **≥ `FRONT_STOP_DISTANCE_CM`**, or the car never reaches the pit. |
-| `SIDE_SENSOR_OFFSET_CM` | Only if you enable the side sensors: ≈ half the car width; set so an edge lane's measured `x` matches its nominal `x`. |
+| `FRONT_SERVO_INTERVAL_S` | How often (seconds of driving) the front scoop lifts to `FRONT_SERVO_UP_DEG`. |
 
-_Not yet implemented: the servos — `Collector`/`Disposer` are log-only, so disposal fires on pit arrival rather than "bucket full"._
+_Not yet implemented: the servos — `Collector`/`Disposer`/`FrontServo` are log-only, so disposal fires on pit arrival rather than "bucket full", and the scoop lift just logs its angle._
 
 ```
 

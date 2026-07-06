@@ -116,7 +116,6 @@ class NavigationController:
         self.front_wall_cm = INF     # believed distance to the end wall, or INF
         self.front_agree = 0         # how many front sensors agreed this tick
         self.pos_source = "BRIDGE"   # "WALL" = y from a believed wall, "BRIDGE" = from odometry
-        self.x_source = "LANE"       # "WALL" = x re-zeroed off a side wall, "LANE" = from lane counting
         self._wall_persist = 0       # consecutive ticks the wall-stop has held
 
         # Odometry bookkeeping for the bridge / expectation prior.
@@ -238,7 +237,7 @@ class NavigationController:
         return (f"pos=({self.x:6.1f},{self.y:6.1f}) hdg={self.heading_rel:6.1f} "
                 f"tgt={self.target_heading:6.1f} lane#{self._lane_index} "
                 f"ld={self.lane_distance:5.1f} y_src={self.pos_source:6s} "
-                f"x_src={self.x_source:4s} wall={wall}(x{self.front_agree})")
+                f"wall={wall}(x{self.front_agree})")
 
     # -- internals ----------------------------------------------------------
 
@@ -283,19 +282,10 @@ class NavigationController:
             self.pos_source = "BRIDGE"
 
         # Along-lane y from lane_distance in the current lane's direction. Cross-lane
-        # x carries over from the last turn (lane counting), corrected below.
+        # x comes purely from lane counting (set in complete_turn); the IMU
+        # heading-hold keeps the car square so it stays centred in the lane.
         self.y = (cfg.START_Y_CM + self.lane_distance if forward
                   else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
-
-        # Edge re-zero: near a side wall (outer lanes), re-anchor x to the measured
-        # wall -- but only if it agrees with the lane-counting prior (rejects a block).
-        self.x_source = "LANE"
-        measured_x = self._side_x(readings, forward)
-        if measured_x is not None:
-            prior = cfg.START_X_CM + self._sweep_sign * self._lane_index * cfg.LANE_WIDTH_CM
-            if abs(measured_x - prior) <= cfg.SIDE_EXPECT_TOL_CM:
-                self.x = measured_x
-                self.x_source = "WALL"
 
         # Leaving the pit zone re-arms disposal for the next visit.
         if self._pit_handled and not self._at_pit():
@@ -319,40 +309,6 @@ class NavigationController:
         if len(cluster) >= cfg.FRONT_AGREE_MIN_COUNT:
             return statistics.median(cluster), len(cluster)
         return INF, len(cluster)
-
-    def _side_x(self, readings, forward):
-        """Cross-lane x measured off a NEAR side wall (edge re-zero), or None.
-
-        The sensor pair facing the arena's -x wall depends on lane direction: a
-        body-left sensor faces arena -x while driving +y, but arena +x while driving
-        -y. Both sensors on a side must agree (rejects a block on one), and the wall
-        must be nearer than SIDE_WALL_TRUST_CM (only the outer lanes). The nearer of
-        the two walls wins. None if no side wall is reliably in range (e.g. a middle
-        lane, or the side sensors are disabled -> all readings inf).
-        """
-        cfg = self.cfg
-        # Which physical pair faces the arena's left (-x) vs right (+x) wall now.
-        left_names, right_names = ((cfg.LEFT_SENSORS, cfg.RIGHT_SENSORS) if forward
-                                   else (cfg.RIGHT_SENSORS, cfg.LEFT_SENSORS))
-        best = None  # (distance, x_estimate); arena left wall at x=0, right at WIDTH
-        dl = self._pair_distance(readings, left_names)
-        if dl is not None and dl <= cfg.SIDE_WALL_TRUST_CM:
-            best = (dl, dl + cfg.SIDE_SENSOR_OFFSET_CM)
-        dr = self._pair_distance(readings, right_names)
-        if (dr is not None and dr <= cfg.SIDE_WALL_TRUST_CM
-                and (best is None or dr < best[0])):
-            best = (dr, cfg.ARENA_WIDTH_CM - dr - cfg.SIDE_SENSOR_OFFSET_CM)
-        return best[1] if best else None
-
-    def _pair_distance(self, readings, names):
-        """Median distance if BOTH sensors in the pair see something and agree, else None."""
-        vals = [readings.get(n, INF) for n in names]
-        finite = [d for d in vals if d != INF]
-        if len(finite) < len(names):          # need both sensors of the pair
-            return None
-        if max(finite) - min(finite) > self.cfg.FRONT_AGREE_TOL_CM:
-            return None                        # disagree -> likely a block on one
-        return statistics.median(finite)
 
     def _at_pit(self):
         if self._lane_index != self._pit_lane:
