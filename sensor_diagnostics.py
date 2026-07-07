@@ -45,14 +45,23 @@ def main():
 
     try:
         while True:
-            for name, spec in cfg.SENSORS.items():
-                raw = sensors.read_raw(name)
-                dist = sensors.read(name)
-                samples = "[" + ", ".join(fmt_sample(s) for s in raw) + "]"
-                print(f"{name:<13} trig={spec['trig']:<3} echo={spec['echo']:<3} "
-                      f"samples={samples:<28} -> {fmt_distance(dist)}")
-            print("-" * 72)
-            time.sleep(REFRESH_S)
+            lines = 0
+            try:
+                for name, spec in cfg.SENSORS.items():
+                    raw = sensors.read_raw(name)
+                    dist = sensors.read(name)
+                    samples = "[" + ", ".join(fmt_sample(s) for s in raw) + "]"
+                    print(f"{name:<13} trig={spec['trig']:<3} echo={spec['echo']:<3} "
+                          f"samples={samples:<28} -> {fmt_distance(dist)}")
+                    lines += 1
+                print("-" * 72)
+                lines += 1
+                time.sleep(REFRESH_S)
+            except KeyboardInterrupt:
+                print(f"\x1b[{lines}B\r", end='')
+                raise
+            else:
+                print(f"\x1b[{lines}A\r", end='')
     except KeyboardInterrupt:
         pass
     finally:
