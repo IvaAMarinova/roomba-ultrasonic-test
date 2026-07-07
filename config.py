@@ -118,9 +118,9 @@ FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 # have unique trig/echo pins. Change all of these to match your actual wiring.
 SENSORS = {
     # Front -- ENABLED (primary position reference).
-    "front_left":   {"trig": 23, "echo": 24, "enabled": True},   # left edge, outboard of bucket
+    "front_left":   {"trig": 6,  "echo": 5,  "enabled": True},   # left edge, outboard of bucket
     "front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
-    "front_right":  {"trig": 6,  "echo": 5,  "enabled": True},   # right edge, outboard of bucket
+    "front_right":  {"trig": 23, "echo": 24, "enabled": True},   # right edge, outboard of bucket
     # Back -- future: reverse / disposal assistance.
     "back_left":    {"trig": 1,  "echo": 25, "enabled": True},   # back, left
     "back_right":   {"trig": 7,  "echo": 8,  "enabled": True},   # back, right
