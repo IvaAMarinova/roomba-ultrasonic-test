@@ -15,7 +15,6 @@ navigation logic can be exercised without hardware.
 """
 
 import config as default_config
-from log import log
 
 try:
     import RPi.GPIO as GPIO
@@ -48,27 +47,27 @@ class MotorDriver:
 
     # -- high-level intents -------------------------------------------------
 
-    def drive(self, speed, steer=0.0):
+    def drive(self, logger, speed, steer=0.0):
         """Move forward at `speed`, biasing with `steer` (-1 left .. +1 right)."""
         # Steering right slows the right side; steering left slows the left side.
-        self._set_side("left", speed + steer)
-        self._set_side("right", speed - steer)
+        self._set_side(logger, "left", speed + steer)
+        self._set_side(logger, "right", speed - steer)
 
-    def turn_left(self, speed):
-        self._set_side("left", -speed)
-        self._set_side("right", +speed)
+    def turn_left(self, logger, speed):
+        self._set_side(logger, "left", -speed)
+        self._set_side(logger, "right", +speed)
 
-    def turn_right(self, speed):
-        self._set_side("left", +speed)
-        self._set_side("right", -speed)
+    def turn_right(self, logger, speed):
+        self._set_side(logger, "left", +speed)
+        self._set_side(logger, "right", -speed)
 
-    def stop(self):
-        self._set_side("left", 0.0)
-        self._set_side("right", 0.0)
+    def stop(self, logger):
+        self._set_side(logger, "left", 0.0)
+        self._set_side(logger, "right", 0.0)
 
     # -- hardware boundary --------------------------------------------------
 
-    def _set_side(self, side, command):
+    def _set_side(self, logger, side, command):
         """Drive one side from a signed command in -1..1 (sign = direction)."""
         command = _clamp(command)
         magnitude = abs(command)
@@ -83,7 +82,7 @@ class MotorDriver:
 
         if self.dry_run:
             label = "stop" if duty == 0.0 else ("fwd" if forward else "rev")
-            log("motor", side=side, mode=label, duty=duty)
+            logger.log("motor", side=side, mode=label, duty=duty)
             return
 
         GPIO.output(spec["dir"], GPIO.HIGH if forward else GPIO.LOW)

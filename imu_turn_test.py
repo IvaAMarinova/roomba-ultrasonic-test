@@ -14,6 +14,7 @@ import time
 
 import config
 from imu import IMU
+from log import Logger
 
 
 def _angle_diff(a, b):
@@ -22,7 +23,8 @@ def _angle_diff(a, b):
 
 
 def main():
-    imu = IMU(config)
+    logger = Logger(format='pretty')
+    imu = IMU(logger, config)
     if not imu.available:
         print("No IMU available -> cannot bench-test closed-loop turn.")
         raise SystemExit(1)

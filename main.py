@@ -14,22 +14,23 @@ Run on the Pi with:  python3 main.py
 """
 
 import time
+import argparse
 
 import config
 from actuators import Disposer, FrontServo
-from log import log
+from log import Logger
 from motors import MotorDriver
 from navigation import NavigationController, Action, Mode, angle_diff
 
 
-def _spin_timed(motors, cfg, direction):
+def _spin_timed(logger, motors, cfg, direction):
     """Original open-loop ~90 deg in-place rotation (no IMU)."""
-    (motors.turn_left if direction == "left" else motors.turn_right)(cfg.TURN_SPEED)
+    (motors.turn_left if direction == "left" else motors.turn_right)(logger, cfg.TURN_SPEED)
     time.sleep(cfg.TURN_TIME_S)
-    motors.stop()
+    motors.stop(logger)
 
 
-def _spin_imu(motors, cfg, direction, imu):
+def _spin_imu(logger, motors, cfg, direction, imu):
     """Rotate in place until the measured heading change reaches the target.
 
     Accumulates the signed per-sample yaw delta (wrap-safe) so it works in
@@ -55,7 +56,7 @@ def _spin_imu(motors, cfg, direction, imu):
     half_goal = cfg.TURN_ANGLE_DEG / 2.0
     boosted = False
 
-    turn_fn(speed)
+    turn_fn(logger, speed)
     start_t = time.time()
     deadline = start_t + cfg.IMU_TURN_TIMEOUT_S
     while time.time() < deadline:
@@ -74,32 +75,32 @@ def _spin_imu(motors, cfg, direction, imu):
                 and time.time() - start_t >= boost_after
                 and abs(turned) < half_goal):
             speed = min(1.0, cfg.TURN_SPEED * cfg.IMU_TURN_BOOST_FACTOR)
-            turn_fn(speed)
+            turn_fn(logger, speed)
             boosted = True
-            log("uturn", step="stall_boost", turned=abs(turned),
-                window_s=boost_after, target=cfg.TURN_ANGLE_DEG,
-                speed_from=cfg.TURN_SPEED, speed_to=speed)
-    motors.stop()
+            logger.log("uturn", step="stall_boost", turned=abs(turned),
+                       window_s=boost_after, target=cfg.TURN_ANGLE_DEG,
+                       speed_from=cfg.TURN_SPEED, speed_to=speed)
+    motors.stop(logger)
     return abs(turned)
 
 
-def _spin_90(motors, cfg, direction, imu=None):
+def _spin_90(logger, motors, cfg, direction, imu=None):
     """Rotate ~TURN_ANGLE_DEG in place.
 
     Uses IMU heading feedback when an IMU is present and USE_IMU_TURN is set;
     otherwise (or if the IMU yields no reading) falls back to the timed spin.
     """
     if imu is not None and imu.available and getattr(cfg, "USE_IMU_TURN", False):
-        turned = _spin_imu(motors, cfg, direction, imu)
+        turned = _spin_imu(logger, motors, cfg, direction, imu)
         if turned is not None:
-            log("uturn", step="imu_spin", direction=direction, turned=turned,
-                target=cfg.TURN_ANGLE_DEG)
+            logger.log("uturn", step="imu_spin", direction=direction, turned=turned,
+                       target=cfg.TURN_ANGLE_DEG)
             return
-        log("uturn", step="timed_fallback", reason="IMU gave no heading")
-    _spin_timed(motors, cfg, direction)
+        logger.log("uturn", step="timed_fallback", reason="IMU gave no heading")
+    _spin_timed(logger, motors, cfg, direction)
 
 
-def _spin_to_heading(motors, cfg, imu, nav, target_rel):
+def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
     """Rotate in place until the car's heading ~= target_rel (start-relative deg).
 
     Re-picks the turn direction each poll so a small overshoot is corrected. No-op
@@ -107,10 +108,10 @@ def _spin_to_heading(motors, cfg, imu, nav, target_rel):
     """
     cur = nav.rel_heading(imu.yaw()) if imu is not None else None
     if cur is None:
-        log("orient", step="skip", reason="no IMU heading")
+        logger.log("orient", step="skip", reason="no IMU heading")
         return False
     err0 = angle_diff(target_rel, cur)
-    log("orient", step="turn", target=target_rel, current=cur, error=err0)
+    logger.log("orient", step="turn", target=target_rel, current=cur, error=err0)
     deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
     while time.time() < deadline:
         cur = nav.rel_heading(imu.yaw())
@@ -118,20 +119,20 @@ def _spin_to_heading(motors, cfg, imu, nav, target_rel):
             err = angle_diff(target_rel, cur)
             if abs(err) <= cfg.IMU_TURN_TOLERANCE_DEG:
                 break
-            (motors.turn_right if err > 0 else motors.turn_left)(cfg.TURN_SPEED)
+            (motors.turn_right if err > 0 else motors.turn_left)(logger, cfg.TURN_SPEED)
         time.sleep(cfg.IMU_TURN_POLL_S)
-    motors.stop()
+    motors.stop(logger)
     return True
 
 
-def _advance_one_lane(motors, cfg):
+def _advance_one_lane(logger, motors, cfg):
     """Drive straight by LANE_WIDTH_CM (the sideways shift into the next lane)."""
-    motors.drive(cfg.DRIVE_SPEED, 0.0)
+    motors.drive(logger, cfg.DRIVE_SPEED, 0.0)
     time.sleep(cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S)
-    motors.stop()
+    motors.stop(logger)
 
 
-def _u_turn(motors, cfg, direction, imu, nav):
+def _u_turn(logger, motors, cfg, direction, imu, nav):
     """End-of-lane U-turn: spin 90, shift one lane width, spin 90 -- one decision.
 
     No sensors are read while it runs; the steps are logged so the second spin
@@ -139,17 +140,17 @@ def _u_turn(motors, cfg, direction, imu, nav):
     reversed, one lane shifted) back into the odometry pose.
     """
     shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
-    log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
-    _spin_90(motors, cfg, direction, imu)
-    log("uturn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
-    _advance_one_lane(motors, cfg)
-    log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
-    _spin_90(motors, cfg, direction, imu)
+    logger.log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
+    _spin_90(logger, motors, cfg, direction, imu)
+    logger.log("uturn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
+    _advance_one_lane(logger, motors, cfg)
+    logger.log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
+    _spin_90(logger, motors, cfg, direction, imu)
     nav.complete_turn()
-    log("uturn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
+    logger.log("uturn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
 
 
-def _drive_distance(motors, cfg, distance_cm, speed):
+def _drive_distance(logger, motors, cfg, distance_cm, speed):
     """Drive straight for a fixed distance (cm) at `speed` (signed: <0 = reverse).
 
     Open-loop timed off DRIVE_CM_PER_S (measured at DRIVE_SPEED). Short move, so
@@ -157,13 +158,13 @@ def _drive_distance(motors, cfg, distance_cm, speed):
     """
     cm_per_s = cfg.DRIVE_CM_PER_S * (abs(speed) / cfg.DRIVE_SPEED)
     seconds = distance_cm / cm_per_s if cm_per_s > 0 else 0.0
-    motors.drive(speed, 0.0)
+    motors.drive(logger, speed, 0.0)
     time.sleep(seconds)
-    motors.stop()
+    motors.stop(logger)
     return seconds
 
 
-def _dispose(motors, cfg, imu, nav, disposer, face_heading=None):
+def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     """Disposal maneuver for a SMALL (car-sized) pit: seat the rear over it, dump.
 
       1. Turn so the car's BACK faces the pit.
@@ -182,25 +183,25 @@ def _dispose(motors, cfg, imu, nav, disposer, face_heading=None):
         # Face AWAY from the pit so the back (the tip side) points into it.
         target = (face_heading if face_heading is not None
                   else angle_diff(nav.bearing_to_pit() + 180.0, 0.0))
-        _spin_to_heading(motors, cfg, imu, nav, target)
+        _spin_to_heading(logger, motors, cfg, imu, nav, target)
 
     rev_s = _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
-    log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
+    logger.log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
 
-    log("dispose", step="dump", hold_s=cfg.DISPOSE_HOLD_S)
+    logger.log("dispose", step="dump", hold_s=cfg.DISPOSE_HOLD_S)
     time.sleep(cfg.DISPOSE_HOLD_S)
     disposer.dump()
 
     _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
-    log("dispose", step="clear", cm=cfg.DISPOSE_REVERSE_CM)
+    logger.log("dispose", step="clear", cm=cfg.DISPOSE_REVERSE_CM)
 
     # Point back down the lane before handing control back to the sweep.
-    _spin_to_heading(motors, cfg, imu, nav, nav.target_heading)
+    _spin_to_heading(logger, motors, cfg, imu, nav, nav.target_heading)
     nav.complete_dispose()
-    log("dispose", step="done")
+    logger.log("dispose", step="done")
 
 
-def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading,
+def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading,
                    stop_distance=None):
     """Turn to `target_heading`, then drive (slow, heading-held) toward a wall.
 
@@ -213,7 +214,7 @@ def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading,
     """
     if stop_distance is None:
         stop_distance = cfg.FRONT_STOP_DISTANCE_CM
-    _spin_to_heading(motors, cfg, imu, nav, target_heading)
+    _spin_to_heading(logger, motors, cfg, imu, nav, target_heading)
     nav.target_heading = target_heading
     cm_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED) if cfg.DRIVE_SPEED else 0.0
     deadline = time.time() + (2.0 * cfg.ARENA_LENGTH_CM / cm_s if cm_s > 0 else 30.0)
@@ -227,12 +228,12 @@ def _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading,
         if cur is not None:
             steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM,
                         cfg.HEADING_HOLD_GAIN * angle_diff(target_heading, cur)))
-        motors.drive(cfg.SLOW_SPEED, steer)
+        motors.drive(logger, cfg.SLOW_SPEED, steer)
         time.sleep(period)
-    motors.stop()
+    motors.stop(logger)
 
 
-def _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period):
+def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period):
     """After the sweep: go back to the pit (mid start wall) and dump the remainder.
 
     The pit is in the MIDDLE of the start wall (y=0), where no wall marks its
@@ -246,47 +247,46 @@ def _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
 
     # 1) Onto the pit's wall (start wall, y=0). heading 180 = -y.
     print("[return] leg 1: drive to the start wall (the pit's side)")
-    _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=180.0)
+    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=180.0)
 
     # 2) To the pit's middle -- fully front-wall-referenced (no odometry):
     #    go to the left wall, then face +x and drive until the FAR (right) wall is
     #    (WIDTH - PIT_X) away, which puts the car at x = PIT_X.
     print("[return] leg 2a: face -x, drive to the left wall (front sensors)")
-    _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
+    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
     print("[return] leg 2b: face +x, drive until the right wall marks the pit's middle")
-    _drive_to_wall(motors, cfg, imu, nav, sensors, period, target_heading=90.0,
+    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=90.0,
                    stop_distance=cfg.ARENA_WIDTH_CM - cfg.PIT_X_CM)
 
     # 3) Final dump: face +y so the BACK points at the start-wall pit, reverse in.
     print("[return] leg 3: final dump into the pit")
-    _dispose(motors, cfg, imu, nav, disposer, face_heading=0.0)
+    _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
     print("[return] final dump complete -- arena swept and emptied.")
 
 
-def execute(cmd, motors, cfg, imu, nav, disposer):
+def execute(logger, cmd, motors, cfg, imu, nav, disposer):
     if cmd.action is Action.FORWARD:
-        motors.drive(cmd.speed, cmd.steer)
+        motors.drive(logger, cmd.speed, cmd.steer)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
-        _u_turn(motors, cfg, direction, imu, nav)
+        _u_turn(logger, motors, cfg, direction, imu, nav)
     elif cmd.action is Action.DISPOSE:
-        _dispose(motors, cfg, imu, nav, disposer)
+        _dispose(logger, motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
-        motors.stop()
+        motors.stop(logger)
 
 
-def _log_status(nav, readings, yaw, cmd):
+def _log_status(logger, nav, readings, yaw, cmd):
     """One structured line per control tick: mode, pose, sensors, IMU, action."""
-    log("nav", mode=nav.mode.name, action=cmd.action.name, reason=cmd.reason,
-        x=nav.x, y=nav.y, heading=nav.heading_rel,
-        target_heading=nav.target_heading, lane=nav._lane_index,
-        lane_distance=nav.lane_distance, front_wall=nav.front_wall_cm,
-        front_agree=nav.front_agree, yaw=yaw, blocks=nav.collector.count,
-        **readings)
+    logger.log("nav", mode=nav.mode.name, action=cmd.action.name, reason=cmd.reason,
+               x=nav.x, y=nav.y, heading=nav.heading_rel,
+               target_heading=nav.target_heading, lane=nav._lane_index,
+               lane_distance=nav.lane_distance, front_wall=nav.front_wall_cm,
+               front_agree=nav.front_agree, yaw=yaw, blocks=nav.collector.count,
+               **readings)
 
 
-
-def run_drive_test(motors, cfg, imu=None):
+def run_drive_test(logger, motors, cfg, imu=None):
     """Blind, open-loop maneuver script -- no ultrasonic sensors.
 
     Forward/stop steps still run for their scripted number of seconds, but the
@@ -299,19 +299,19 @@ def run_drive_test(motors, cfg, imu=None):
     print(f"USE_SENSORS = False -> open-loop drive test (turns: {turn_mode})")
     for action, seconds in cfg.DRIVE_TEST_SEQUENCE:
         if action in ("left", "right"):
-            log("drive_test", step="turn", direction=action, deg=cfg.TURN_ANGLE_DEG)
-            _spin_90(motors, cfg, action, imu)
+            logger.log("drive_test", step="turn", direction=action, deg=cfg.TURN_ANGLE_DEG)
+            _spin_90(logger, motors, cfg, action, imu)
             continue
-        log("drive_test", step=action, seconds=seconds)
+        logger.log("drive_test", step=action, seconds=seconds)
         if action == "forward":
-            motors.drive(cfg.DRIVE_SPEED, 0.0)
+            motors.drive(logger, cfg.DRIVE_SPEED, 0.0)
         else:  # "stop"
-            motors.stop()
+            motors.stop(logger)
         time.sleep(seconds)
-    motors.stop()
+    motors.stop(logger)
 
 
-def run_navigation(motors, cfg, imu=None):
+def run_navigation(logger, motors, cfg, imu=None):
     """IMU + odometry navigation loop with block disposal at the pit."""
     # Imported here so the drive-test mode never needs the sensor stack.
     from sensors import UltrasonicArray
@@ -356,8 +356,8 @@ def run_navigation(motors, cfg, imu=None):
             readings = sensors.read_all()
             yaw = imu.yaw() if imu is not None else None
             cmd = nav.decide(readings, yaw, dt)
-            _log_status(nav, readings, yaw, cmd)
-            execute(cmd, motors, cfg, imu, nav, disposer)
+            _log_status(logger, nav, readings, yaw, cmd)
+            execute(logger, cmd, motors, cfg, imu, nav, disposer)
 
             # Periodically raise the front scoop while cruising. The timer counts
             # only FORWARD time, so it pauses through the (blocking) U-turns and
@@ -380,7 +380,14 @@ def run_navigation(motors, cfg, imu=None):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--format',
+                        type=str, choices=('pretty', 'json'), default='pretty')
+    args = parser.parse_args()
+
     cfg = config
+    logger = Logger(format=args.format)
+
     motors = MotorDriver(cfg)
     # IMU is optional: if absent/disabled, IMU.available stays False, yaw()
     # returns None, and turns fall back to the timed spin while driving stays
@@ -388,16 +395,16 @@ def main():
     imu = None
     if getattr(cfg, "USE_IMU_TURN", False):
         from imu import IMU
-        imu = IMU(cfg)
+        imu = IMU(logger, cfg)
     try:
         if cfg.USE_SENSORS:
-            run_navigation(motors, cfg, imu)
+            run_navigation(logger, motors, cfg, imu)
         else:
-            run_drive_test(motors, cfg, imu)
+            run_drive_test(logger, motors, cfg, imu)
     except KeyboardInterrupt:
         pass
     finally:
-        motors.stop()
+        motors.stop(logger)
         motors.cleanup()
 
 

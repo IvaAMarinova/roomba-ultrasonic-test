@@ -22,8 +22,6 @@ corrupted/unknown sensor batches instead of crashing the turn loop.
 import math
 import time
 
-from log import log
-
 try:
     import board
     import busio
@@ -66,18 +64,18 @@ if _HAS_IMU_LIBS:
 class IMU:
     """Heading source backed by a BNO086 over I2C (pins 3/5)."""
 
-    def __init__(self, cfg=None, dry_run=None):
+    def __init__(self, logger, cfg=None, dry_run=None):
         self.available = False
         self._bno = None
         if dry_run or (dry_run is None and not _HAS_IMU_LIBS):
-            log("imu", status="absent", fallback="timed turns")
+            logger.log("imu", status="absent", fallback="timed turns")
             return
         try:
             self._init_sensor()
             self.available = True
-            log("imu", status="ready")
+            logger.log("imu", status="ready")
         except Exception as e:  # noqa: BLE001 - sensor raises bare RuntimeError
-            log("imu", status="init_failed", error=str(e), fallback="timed turns")
+            logger.log("imu", status="init_failed", error=str(e), fallback="timed turns")
             self.available = False
 
     def _init_sensor(self, max_attempts=8):
