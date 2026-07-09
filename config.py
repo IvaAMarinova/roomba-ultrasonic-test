@@ -183,7 +183,7 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # ---------------------------------------------------------------------------
 DRIVE_SPEED = 0.3                # nominal forward speed (0..1 duty)
 SLOW_SPEED = 0.2                 # forward speed when an obstacle is getting close
-TURN_SPEED = 0.2                 # in-place rotation speed
+TURN_SPEED = 0.1                 # in-place rotation speed
 
 # Physical speed calibration -- the ONE thing to measure. FULL_SPEED_CM_PER_S is how
 # fast the car actually travels at full duty (speed 1.0), in cm/s. The odometry cm/s
@@ -258,8 +258,8 @@ IMU_TURN_BOOST_FACTOR = 1.4      # multiply TURN_SPEED by this when stalled
 #   of swapping wires if a wheel spins the wrong way.
 # ---------------------------------------------------------------------------
 MOTORS = {
-    "left":  {"dir": 20, "pwm": 13, "invert": True},
-    "right": {"dir": 16, "pwm": 12, "invert": True},
+    "left":  {"dir": 20, "pwm": 13, "invert": False},
+    "right": {"dir": 16, "pwm": 12, "invert": False},
 }
 MOTOR_PWM_HZ = 1000              # PWM frequency on the speed pins
 MOTOR_DEADZONE = 0.05            # |side command| below this counts as stop
