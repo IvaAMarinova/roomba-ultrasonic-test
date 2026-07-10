@@ -311,14 +311,13 @@ def run_drive_test(logger, motors, cfg, imu=None):
     motors.stop(logger)
 
 
-def run_navigation(logger, motors, cfg, imu=None):
+def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
     """IMU + odometry navigation loop with block disposal at the pit."""
     # Imported here so the drive-test mode never needs the sensor stack.
     from sensors import UltrasonicArray
 
     sensors = UltrasonicArray(cfg)
     disposer = Disposer(cfg)
-    front_servo = FrontServo(cfg)
     nav = NavigationController(cfg)
     period = 1.0 / cfg.CONTROL_LOOP_HZ
 
@@ -336,8 +335,9 @@ def run_navigation(logger, motors, cfg, imu=None):
     print(f"  pit           : ({cfg.PIT_X_CM:.0f}, {cfg.PIT_Y_CM:.0f}) cm, "
           f"arrive within {cfg.PIT_ARRIVAL_RADIUS_CM:.0f} cm")
     print(f"  collection cap: {cfg.COLLECTION_CAPACITY_BLOCKS} blocks")
-    print(f"  front scoop   : lift to {cfg.FRONT_SERVO_UP_DEG:.0f}deg every "
-          f"{cfg.FRONT_SERVO_INTERVAL_S:.0f}s driving, hold {cfg.FRONT_SERVO_HOLD_S:.1f}s")
+    print(f"  front scoop   : start up {cfg.FRONT_SERVO_START_UP_S:.1f}s, then lift to "
+          f"{cfg.FRONT_SERVO_UP_DEG:.0f}deg every {cfg.FRONT_SERVO_INTERVAL_S:.0f}s driving, "
+          f"hold {cfg.FRONT_SERVO_HOLD_S:.1f}s")
     print(f"  driving       : {drive_mode}   turns: {turn_mode}")
     print(f"  end of lane   : wall standoff {cfg.FRONT_STOP_DISTANCE_CM:.0f} cm, "
           f">={cfg.FRONT_AGREE_MIN_COUNT}/3 agree, hold {cfg.WALL_PERSIST_TICKS} ticks "
@@ -362,7 +362,7 @@ def run_navigation(logger, motors, cfg, imu=None):
             # Periodically raise the front scoop while cruising. The timer counts
             # only FORWARD time, so it pauses through the (blocking) U-turns and
             # disposal maneuvers rather than firing right after one.
-            if cmd.action is Action.FORWARD:
+            if cmd.action is Action.FORWARD and front_servo is not None:
                 drive_elapsed += dt
                 if drive_elapsed >= cfg.FRONT_SERVO_INTERVAL_S:
                     front_servo.raise_up()          # up to 90 deg (keeps driving)
@@ -389,6 +389,7 @@ def main():
     logger = Logger(format=args.log_format)
 
     motors = MotorDriver(cfg)
+    front_servo = FrontServo(cfg)
     # IMU is optional: if absent/disabled, IMU.available stays False, yaw()
     # returns None, and turns fall back to the timed spin while driving stays
     # open-loop straight (no heading-hold).
@@ -397,14 +398,16 @@ def main():
         from imu import IMU
         imu = IMU(logger, cfg)
     try:
+        front_servo.startup()
         if cfg.USE_SENSORS:
-            run_navigation(logger, motors, cfg, imu)
+            run_navigation(logger, motors, cfg, imu, front_servo)
         else:
             run_drive_test(logger, motors, cfg, imu)
     except KeyboardInterrupt:
         pass
     finally:
         motors.stop(logger)
+        front_servo.cleanup()
         motors.cleanup()
 
 

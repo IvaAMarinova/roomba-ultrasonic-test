@@ -1,15 +1,28 @@
 """
-Future-servo placeholders: the collection bucket ("багер") and the disposal
-mechanism. Mirrors motors.py / imu.py's hardware-boundary philosophy -- right
-now these do nothing but track state and log intent, so the navigation state
-machine can be wired and tested before any servo exists. When the servos land,
-only the bodies of the methods here change; the callers don't.
+Actuators: collection bucket state, front scoop servo, and disposal mechanism.
 
-  Collector -- knows how many blocks are in the bucket and when it is full.
-  Disposer  -- performs the actual dump at the pit (the back-of-car "tip").
+Mirrors motors.py / imu.py's hardware-boundary philosophy -- hardware drivers
+fall back to dry-run logging off-Pi or when dependencies are missing.
+
+  Collector  -- knows how many blocks are in the bucket and when it is full.
+  FrontServo -- drives the front scoop on GPIO 18 (gpiozero Servo PWM).
+  Disposer   -- performs the actual dump at the pit (the back-of-car "tip").
 """
 
+import time
+
 import config as default_config
+
+try:
+    from gpiozero import Servo
+    _HAS_SERVO = True
+except (ImportError, RuntimeError):
+    Servo = None
+    _HAS_SERVO = False
+
+# Match the working roomba servo_test.py pulse widths (0.5 ms .. 2.5 ms).
+_SERVO_MIN_PULSE_S = 0.0005
+_SERVO_MAX_PULSE_S = 0.0025
 
 
 class Collector:
@@ -42,25 +55,46 @@ class Collector:
 
 
 class FrontServo:
-    """The front collection scoop ("багер") servo.
+    """The front collection scoop ("багер") servo on FRONT_SERVO_PIN.
 
-    While driving, the scoop is raised to FRONT_SERVO_UP_DEG on a timer and then
-    returned to FRONT_SERVO_DOWN_DEG (the periodic lift is driven by main's loop;
-    this class just holds the target angle and logs each move).
-
-    TODO(servo): drive the real servo PWM on FRONT_SERVO_PIN here. Today it only
-    tracks/logs the angle so the timing can be exercised without hardware. Dry-run
-    safe off-Pi like the other drivers.
+    Uses gpiozero Servo with the same 0.5–2.5 ms pulse range as servo_test.py.
+    Configured angles map linearly to servo values: DOWN -> -1.0 (MIN pulse),
+    UP -> +1.0 (MAX pulse). Each move_to() sets the target once (no sweep).
     """
 
-    def __init__(self, cfg=default_config):
+    def __init__(self, cfg=default_config, dry_run=None):
         self.cfg = cfg
-        self.angle = cfg.FRONT_SERVO_DOWN_DEG
+        self.angle = cfg.FRONT_SERVO_UP_DEG
+        self.dry_run = (not _HAS_SERVO) if dry_run is None else dry_run
+        self._servo = None
+        if not self.dry_run:
+            self._servo = Servo(
+                cfg.FRONT_SERVO_PIN,
+                min_pulse_width=_SERVO_MIN_PULSE_S,
+                max_pulse_width=_SERVO_MAX_PULSE_S,
+                initial_value=self._deg_to_value(cfg.FRONT_SERVO_UP_DEG),
+            )
+
+    def _deg_to_value(self, deg):
+        """Map configured scoop angle to gpiozero Servo value in [-1.0, 1.0]."""
+        down = self.cfg.FRONT_SERVO_DOWN_DEG
+        up = self.cfg.FRONT_SERVO_UP_DEG
+        span = up - down
+        if span == 0:
+            return 0.0
+        t = (deg - down) / span
+        t = max(0.0, min(1.0, t))
+        return -1.0 + 2.0 * t
 
     def move_to(self, deg):
-        """Command the servo to `deg`. Placeholder until the servo lands."""
+        """Command the servo to `deg` with a single PWM target (no sweep)."""
         self.angle = deg
-        print(f"[front-servo] -> {deg:.0f}deg (placeholder -- no servo yet)")
+        value = self._deg_to_value(deg)
+        if self.dry_run:
+            print(f"[front-servo] -> {deg:.0f}deg (dry run, value={value:+.2f})")
+            return
+        self._servo.value = value
+        print(f"[front-servo] -> {deg:.0f}deg")
 
     def raise_up(self):
         """Lift the scoop to the raised angle (FRONT_SERVO_UP_DEG)."""
@@ -69,6 +103,26 @@ class FrontServo:
     def lower(self):
         """Return the scoop to its resting angle (FRONT_SERVO_DOWN_DEG)."""
         self.move_to(self.cfg.FRONT_SERVO_DOWN_DEG)
+
+    def startup(self):
+        """Hold the scoop raised at launch, then lower to the collecting position.
+
+        The scoop is already commanded up on init. Waits FRONT_SERVO_START_UP_S
+        (0 = lower immediately) before moving to the down/collecting angle.
+        """
+        self.raise_up()
+        hold_s = self.cfg.FRONT_SERVO_START_UP_S
+        if hold_s > 0:
+            print(f"[front-servo] holding up for {hold_s:.1f}s (regulation start size)")
+            time.sleep(hold_s)
+        self.lower()
+
+    def cleanup(self):
+        """Stop PWM pulses and release the GPIO pin."""
+        if self._servo is not None:
+            self._servo.detach()
+            self._servo.close()
+            self._servo = None
 
 
 class Disposer:

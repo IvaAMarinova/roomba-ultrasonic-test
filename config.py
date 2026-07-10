@@ -78,17 +78,19 @@ DISPOSE_HOLD_S = 2.0                # placeholder dwell while "dumping" (until s
 COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes from the collection servo later
 
 # ---------------------------------------------------------------------------
-# Front scoop servo (future hardware).
-#   The front bucket ("багер") is raised by a servo. While driving, it lifts to
-#   FRONT_SERVO_UP_DEG every FRONT_SERVO_INTERVAL_S (to clear/settle the collected
-#   blocks), holds FRONT_SERVO_HOLD_S at the top, then returns to FRONT_SERVO_DOWN_DEG.
-#   The timer counts driving time and pauses during blocking maneuvers (U-turn,
-#   disposal). Placeholder until the servo lands -- see actuators.FrontServo.
+# Front scoop servo.
+#   The shovel exceeds the max length when down, but the regulation allows that
+#   as long as the run starts with the scoop raised. On launch the scoop is
+#   commanded up, held for FRONT_SERVO_START_UP_S (0 = lower immediately), then
+#   lowered to the collecting position. While driving it lifts to
+#   FRONT_SERVO_UP_DEG every FRONT_SERVO_INTERVAL_S, holds FRONT_SERVO_HOLD_S,
+#   then returns to FRONT_SERVO_DOWN_DEG. See actuators.FrontServo.
 # ---------------------------------------------------------------------------
-FRONT_SERVO_PIN = 18                # BCM pin for the front servo PWM (TODO: real wiring)
+FRONT_SERVO_PIN = 18                # BCM pin for the front servo PWM signal
+FRONT_SERVO_START_UP_S = 0.0        # seconds to hold scoop up at launch before lowering
 FRONT_SERVO_INTERVAL_S = 20.0       # raise the front scoop this often (seconds of driving)
 FRONT_SERVO_UP_DEG = 90.0           # raised angle
-FRONT_SERVO_DOWN_DEG = 0.0          # resting angle
+FRONT_SERVO_DOWN_DEG = 0.0          # resting / collecting angle
 FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 
 # ---------------------------------------------------------------------------
