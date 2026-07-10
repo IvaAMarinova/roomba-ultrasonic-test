@@ -11,6 +11,18 @@ set -euo pipefail
 tag=roomba-bot
 run_id="$(date +%Y%m%d-%H%M%S)-$$"
 
+has_log_format=0
+for arg in "$@"; do
+	if [[ "$arg" == "--log-format" || "$arg" == "--log-format="* ]]; then
+		has_log_format=1
+		break
+	fi
+done
+
+if [[ "$has_log_format" -eq 0 ]]; then
+	set -- "$@" --log-format=json
+fi
+
 echo "=== run $run_id start: $* ===" | systemd-cat -t "$tag"
 status=0
 # -u: unbuffered, so lines reach the journal live and nothing is lost on a crash.

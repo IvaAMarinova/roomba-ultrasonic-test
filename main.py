@@ -381,12 +381,12 @@ def run_navigation(logger, motors, cfg, imu=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--format',
+    parser.add_argument('--log-format',
                         type=str, choices=('pretty', 'json'), default='pretty')
     args = parser.parse_args()
 
     cfg = config
-    logger = Logger(format=args.format)
+    logger = Logger(format=args.log_format)
 
     motors = MotorDriver(cfg)
     # IMU is optional: if absent/disabled, IMU.available stays False, yaw()
