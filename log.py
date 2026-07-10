@@ -47,7 +47,10 @@ def _readable_print(rec: dict):
         if key == 'event':
             continue
         kv_pairs.append(_color(next(key_colors), key + ':', bold=True))
-        kv_pairs.append(value)
+        if isinstance(value, float):
+            kv_pairs.append(f'{value:.2f}')
+        else:
+            kv_pairs.append(value)
     print(_color("yellow", rec["event"], bold=True), *kv_pairs)
 
 
