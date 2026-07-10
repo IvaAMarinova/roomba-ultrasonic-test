@@ -192,7 +192,7 @@ TURN_SPEED = 0.1                 # in-place rotation speed
 # tracks it automatically -- change DRIVE_SPEED and the distance estimate follows, no
 # separate re-measure. To calibrate: drive at DRIVE_SPEED for a known time, cm/s =
 # distance/time, then FULL_SPEED_CM_PER_S = that / DRIVE_SPEED.
-FULL_SPEED_CM_PER_S = 50.0       # e.g. 30 cm/s at DRIVE_SPEED 0.6 -> 30 / 0.6 = 50
+FULL_SPEED_CM_PER_S = 250.0       # e.g. 30 cm/s at DRIVE_SPEED 0.6 -> 30 / 0.6 = 50
 
 # cm/s at the normal cruise speed. DERIVED (not hardcoded). It is only a fallback/
 # bridge value now that position is wall-referenced: it bridges along-lane position
