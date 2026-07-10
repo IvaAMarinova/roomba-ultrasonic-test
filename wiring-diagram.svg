@@ -1,0 +1,230 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1210" viewBox="0 0 1100 1210" font-family="Helvetica, Arial, sans-serif">
+  <!--
+    HC-SR04 wiring reference for the Roomba project.
+    Generated from config.py: SENSORS + MOTORS + IMU (I2C).
+    BCM->physical mapping follows the official Raspberry Pi 40-pin header.
+  -->
+  <rect width="1100" height="1210" fill="#fbfbfb"/>
+
+  <text x="550" y="40" text-anchor="middle" font-size="24" font-weight="bold" fill="#111">HC-SR04 Ultrasonic Wiring &#8212; Raspberry Pi 40-pin Header</text>
+  <text x="550" y="66" text-anchor="middle" font-size="14" fill="#555">Numbers in circles = physical header pins &#183; GPIO = BCM numbering (as in config.py)</text>
+  <text x="550" y="86" text-anchor="middle" font-size="13" fill="#777">Board viewed from above: pin 1 (3V3) is the corner pin nearest the microSD-card end</text>
+
+  <!-- header outline -->
+  <rect x="533" y="116" width="92" height="754" rx="10" fill="#ececec" stroke="#999" stroke-width="1.5"/>
+
+  <!-- ============ ROW 1 : pins 1 / 2 ============ -->
+  <text x="470" y="145" text-anchor="end" font-size="15" fill="#111"><tspan font-weight="bold">sensor VCC</tspan><tspan fill="#555"> &#183; 3V3 power</tspan></text>
+  <line x1="478" y1="140" x2="545" y2="140" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="140" r="13" fill="#1a1a1a"/><text x="560" y="144" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">1</text>
+  <circle cx="598" cy="140" r="13" fill="#1a1a1a"/><text x="598" y="144" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">2</text>
+  <line x1="613" y1="140" x2="680" y2="140" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="145" font-size="15" fill="#333">5V power</text>
+
+  <!-- ============ ROW 2 : pins 3 / 4 ============ -->
+  <text x="470" y="181" text-anchor="end" font-size="15" fill="#888">GPIO 2 (SDA) &#8212; IMU, in use</text>
+  <line x1="478" y1="176" x2="545" y2="176" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="176" r="13" fill="#6a6a6a"/><text x="560" y="180" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">3</text>
+  <circle cx="598" cy="176" r="13" fill="#1a1a1a"/><text x="598" y="180" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">4</text>
+  <line x1="613" y1="176" x2="680" y2="176" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="181" font-size="15" fill="#333">5V power</text>
+
+  <!-- ============ ROW 3 : pins 5 / 6 ============ -->
+  <text x="470" y="217" text-anchor="end" font-size="15" fill="#888">GPIO 3 (SCL) &#8212; IMU, in use</text>
+  <line x1="478" y1="212" x2="545" y2="212" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="212" r="13" fill="#6a6a6a"/><text x="560" y="216" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">5</text>
+  <circle cx="598" cy="212" r="13" fill="#1a1a1a"/><text x="598" y="216" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">6</text>
+  <line x1="613" y1="212" x2="680" y2="212" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="217" font-size="15" fill="#333">Ground &#8212; sensor GND</text>
+
+  <!-- ============ ROW 4 : pins 7 / 8 ============ -->
+  <text x="470" y="253" text-anchor="end" font-size="15" fill="#aaa">GPIO 4 (GPCLK0) &#8212; free</text>
+  <line x1="478" y1="248" x2="545" y2="248" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="248" r="13" fill="#1a1a1a"/><text x="560" y="252" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">7</text>
+  <circle cx="598" cy="248" r="13" fill="#1a1a1a"/><text x="598" y="252" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">8</text>
+  <line x1="613" y1="248" x2="680" y2="248" stroke="#ddd" stroke-width="1.5"/>
+  <text x="688" y="253" font-size="15" fill="#aaa">GPIO 14 (TXD) &#8212; free</text>
+
+  <!-- ============ ROW 5 : pins 9 / 10 ============ -->
+  <text x="470" y="289" text-anchor="end" font-size="15" fill="#333">Ground</text>
+  <line x1="478" y1="284" x2="545" y2="284" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="284" r="13" fill="#1a1a1a"/><text x="560" y="288" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">9</text>
+  <circle cx="598" cy="284" r="13" fill="#1a1a1a"/><text x="598" y="288" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">10</text>
+  <line x1="613" y1="284" x2="680" y2="284" stroke="#ddd" stroke-width="1.5"/>
+  <text x="688" y="289" font-size="15" fill="#aaa">GPIO 15 (RXD) &#8212; free</text>
+
+  <!-- ============ ROW 6 : pins 11 / 12 ============ -->
+  <text x="470" y="325" text-anchor="end" font-size="15" fill="#aaa">GPIO 17 &#8212; free</text>
+  <line x1="478" y1="320" x2="545" y2="320" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="320" r="13" fill="#1a1a1a"/><text x="560" y="324" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">11</text>
+  <circle cx="598" cy="320" r="13" fill="#1a1a1a"/><text x="598" y="324" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">12</text>
+  <line x1="613" y1="320" x2="680" y2="320" stroke="#ddd" stroke-width="1.5"/>
+  <text x="688" y="325" font-size="15" fill="#aaa">GPIO 18 &#8212; free</text>
+
+  <!-- ============ ROW 7 : pins 13 / 14 ============ -->
+  <text x="470" y="361" text-anchor="end" font-size="15" fill="#111"><tspan font-weight="bold">front_center TRIG</tspan><tspan fill="#555"> &#183; GPIO 27 &#183; orange</tspan></text>
+  <line x1="478" y1="356" x2="545" y2="356" stroke="#f77f00" stroke-width="5"/>
+  <circle cx="560" cy="356" r="13" fill="#1a1a1a" stroke="#f77f00" stroke-width="3.5"/><text x="560" y="360" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">13</text>
+  <circle cx="598" cy="356" r="13" fill="#1a1a1a"/><text x="598" y="360" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">14</text>
+  <line x1="613" y1="356" x2="680" y2="356" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="361" font-size="15" fill="#333">Ground</text>
+
+  <!-- ============ ROW 8 : pins 15 / 16 ============ -->
+  <text x="470" y="397" text-anchor="end" font-size="15" fill="#111"><tspan font-weight="bold">front_center ECHO</tspan><tspan fill="#555"> &#183; GPIO 22 &#183; yellow</tspan></text>
+  <line x1="478" y1="392" x2="545" y2="392" stroke="#f5c400" stroke-width="5"/>
+  <circle cx="560" cy="392" r="13" fill="#1a1a1a" stroke="#f5c400" stroke-width="3.5"/><text x="560" y="396" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">15</text>
+  <circle cx="598" cy="392" r="13" fill="#1a1a1a" stroke="#7b4a12" stroke-width="3.5"/><text x="598" y="396" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">16</text>
+  <line x1="613" y1="392" x2="680" y2="392" stroke="#7b4a12" stroke-width="5"/>
+  <text x="688" y="397" font-size="15" fill="#111"><tspan font-weight="bold">front_right TRIG</tspan><tspan fill="#555"> &#183; GPIO 23 &#183; brown</tspan></text>
+
+  <!-- ============ ROW 9 : pins 17 / 18 ============ -->
+  <text x="470" y="433" text-anchor="end" font-size="15" fill="#111"><tspan font-weight="bold">sensor VCC</tspan><tspan fill="#555"> &#183; 3V3 power</tspan></text>
+  <line x1="478" y1="428" x2="545" y2="428" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="428" r="13" fill="#1a1a1a"/><text x="560" y="432" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">17</text>
+  <circle cx="598" cy="428" r="13" fill="#1a1a1a" stroke="#d62828" stroke-width="3.5"/><text x="598" y="432" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">18</text>
+  <line x1="613" y1="428" x2="680" y2="428" stroke="#d62828" stroke-width="5"/>
+  <text x="688" y="433" font-size="15" fill="#111"><tspan font-weight="bold">front_right ECHO</tspan><tspan fill="#555"> &#183; GPIO 24 &#183; red</tspan></text>
+
+  <!-- ============ ROW 10 : pins 19 / 20 ============ -->
+  <text x="470" y="469" text-anchor="end" font-size="15" fill="#aaa">GPIO 10 (MOSI) &#8212; free</text>
+  <line x1="478" y1="464" x2="545" y2="464" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="464" r="13" fill="#1a1a1a"/><text x="560" y="468" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">19</text>
+  <circle cx="598" cy="464" r="13" fill="#1a1a1a"/><text x="598" y="468" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">20</text>
+  <line x1="613" y1="464" x2="680" y2="464" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="469" font-size="15" fill="#333">Ground</text>
+
+  <!-- ============ ROW 11 : pins 21 / 22 ============ -->
+  <text x="470" y="505" text-anchor="end" font-size="15" fill="#aaa">GPIO 9 (MISO) &#8212; free</text>
+  <line x1="478" y1="500" x2="545" y2="500" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="500" r="13" fill="#1a1a1a"/><text x="560" y="504" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">21</text>
+  <circle cx="598" cy="500" r="13" fill="#1a1a1a" stroke="#000000" stroke-width="3.5"/><text x="598" y="504" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">22</text>
+  <line x1="613" y1="500" x2="680" y2="500" stroke="#000000" stroke-width="5"/>
+  <text x="688" y="505" font-size="15" fill="#111"><tspan font-weight="bold">back_left ECHO</tspan><tspan fill="#555"> &#183; GPIO 25 &#183; black</tspan></text>
+
+  <!-- ============ ROW 12 : pins 23 / 24 ============ -->
+  <text x="470" y="541" text-anchor="end" font-size="15" fill="#aaa">GPIO 11 (SCLK) &#8212; free</text>
+  <line x1="478" y1="536" x2="545" y2="536" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="536" r="13" fill="#1a1a1a"/><text x="560" y="540" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">23</text>
+  <circle cx="598" cy="536" r="13" fill="#1a1a1a" stroke="#8c8c8c" stroke-width="3.5"/><text x="598" y="540" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">24</text>
+  <line x1="613" y1="536" x2="680" y2="536" stroke="#8c8c8c" stroke-width="5"/>
+  <text x="688" y="541" font-size="15" fill="#111"><tspan font-weight="bold">back_right ECHO</tspan><tspan fill="#555"> &#183; GPIO 8 &#183; gray</tspan></text>
+
+  <!-- ============ ROW 13 : pins 25 / 26 ============ -->
+  <text x="470" y="577" text-anchor="end" font-size="15" fill="#333">Ground</text>
+  <line x1="478" y1="572" x2="545" y2="572" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="572" r="13" fill="#1a1a1a"/><text x="560" y="576" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">25</text>
+  <circle cx="598" cy="572" r="13" fill="#1a1a1a" stroke="#7b2fbe" stroke-width="3.5"/><text x="598" y="576" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">26</text>
+  <line x1="613" y1="572" x2="680" y2="572" stroke="#7b2fbe" stroke-width="5"/>
+  <text x="688" y="577" font-size="15" fill="#111"><tspan font-weight="bold">back_right TRIG</tspan><tspan fill="#555"> &#183; GPIO 7 &#183; purple</tspan></text>
+
+  <!-- ============ ROW 14 : pins 27 / 28 ============ -->
+  <text x="470" y="613" text-anchor="end" font-size="15" fill="#aaa">GPIO 0 (ID_SD) &#8212; reserved</text>
+  <line x1="478" y1="608" x2="545" y2="608" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="608" r="13" fill="#1a1a1a"/><text x="560" y="612" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">27</text>
+  <line x1="613" y1="608" x2="680" y2="608" stroke="#444444" stroke-width="7"/>
+  <line x1="613" y1="608" x2="680" y2="608" stroke="#ffffff" stroke-width="4.5"/>
+  <circle cx="598" cy="608" r="15.5" fill="none" stroke="#444444" stroke-width="1.2"/>
+  <circle cx="598" cy="608" r="13" fill="#1a1a1a" stroke="#ffffff" stroke-width="3.5"/><text x="598" y="612" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">28</text>
+  <text x="688" y="613" font-size="15" fill="#111"><tspan font-weight="bold">back_left TRIG</tspan><tspan fill="#555"> &#183; GPIO 1 &#183; white</tspan></text>
+
+  <!-- ============ ROW 15 : pins 29 / 30 ============ -->
+  <text x="470" y="649" text-anchor="end" font-size="15" fill="#111"><tspan font-weight="bold">front_left ECHO</tspan><tspan fill="#555"> &#183; GPIO 5 &#183; blue</tspan></text>
+  <line x1="478" y1="644" x2="545" y2="644" stroke="#1d66d6" stroke-width="5"/>
+  <circle cx="560" cy="644" r="13" fill="#1a1a1a" stroke="#1d66d6" stroke-width="3.5"/><text x="560" y="648" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">29</text>
+  <circle cx="598" cy="644" r="13" fill="#1a1a1a"/><text x="598" y="648" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">30</text>
+  <line x1="613" y1="644" x2="680" y2="644" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="649" font-size="15" fill="#333">Ground</text>
+
+  <!-- ============ ROW 16 : pins 31 / 32 ============ -->
+  <text x="470" y="685" text-anchor="end" font-size="15" fill="#111"><tspan font-weight="bold">front_left TRIG</tspan><tspan fill="#555"> &#183; GPIO 6 &#183; green</tspan></text>
+  <line x1="478" y1="680" x2="545" y2="680" stroke="#2e9e44" stroke-width="5"/>
+  <circle cx="560" cy="680" r="13" fill="#1a1a1a" stroke="#2e9e44" stroke-width="3.5"/><text x="560" y="684" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">31</text>
+  <circle cx="598" cy="680" r="13" fill="#6a6a6a"/><text x="598" y="684" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">32</text>
+  <line x1="613" y1="680" x2="680" y2="680" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="685" font-size="15" fill="#888">GPIO 12 &#8212; motor L PWM, in use</text>
+
+  <!-- ============ ROW 17 : pins 33 / 34 ============ -->
+  <text x="470" y="721" text-anchor="end" font-size="15" fill="#888">GPIO 13 &#8212; motor R PWM, in use</text>
+  <line x1="478" y1="716" x2="545" y2="716" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="716" r="13" fill="#6a6a6a"/><text x="560" y="720" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">33</text>
+  <circle cx="598" cy="716" r="13" fill="#1a1a1a"/><text x="598" y="720" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">34</text>
+  <line x1="613" y1="716" x2="680" y2="716" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="721" font-size="15" fill="#333">Ground</text>
+
+  <!-- ============ ROW 18 : pins 35 / 36 ============ -->
+  <text x="470" y="757" text-anchor="end" font-size="15" fill="#aaa">GPIO 19 &#8212; free</text>
+  <line x1="478" y1="752" x2="545" y2="752" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="752" r="13" fill="#1a1a1a"/><text x="560" y="756" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">35</text>
+  <circle cx="598" cy="752" r="13" fill="#6a6a6a"/><text x="598" y="756" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">36</text>
+  <line x1="613" y1="752" x2="680" y2="752" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="757" font-size="15" fill="#888">GPIO 16 &#8212; motor L DIR, in use</text>
+
+  <!-- ============ ROW 19 : pins 37 / 38 ============ -->
+  <text x="470" y="793" text-anchor="end" font-size="15" fill="#aaa">GPIO 26 &#8212; free</text>
+  <line x1="478" y1="788" x2="545" y2="788" stroke="#ddd" stroke-width="1.5"/>
+  <circle cx="560" cy="788" r="13" fill="#1a1a1a"/><text x="560" y="792" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">37</text>
+  <circle cx="598" cy="788" r="13" fill="#6a6a6a"/><text x="598" y="792" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">38</text>
+  <line x1="613" y1="788" x2="680" y2="788" stroke="#bbb" stroke-width="1.5"/>
+  <text x="688" y="793" font-size="15" fill="#888">GPIO 20 &#8212; motor R DIR, in use</text>
+
+  <!-- ============ ROW 20 : pins 39 / 40 ============ -->
+  <text x="470" y="829" text-anchor="end" font-size="15" fill="#333">Ground</text>
+  <line x1="478" y1="824" x2="545" y2="824" stroke="#bbb" stroke-width="1.5"/>
+  <circle cx="560" cy="824" r="13" fill="#1a1a1a"/><text x="560" y="828" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">39</text>
+  <circle cx="598" cy="824" r="13" fill="#1a1a1a"/><text x="598" y="828" text-anchor="middle" font-size="11" fill="#fff" font-weight="bold">40</text>
+  <line x1="613" y1="824" x2="680" y2="824" stroke="#ddd" stroke-width="1.5"/>
+  <text x="688" y="829" font-size="15" fill="#aaa">GPIO 21 &#8212; free</text>
+
+  <!-- ==================== LEGEND ==================== -->
+  <text x="60" y="912" font-size="17" font-weight="bold" fill="#111">Jumper color key</text>
+  <text x="230" y="912" font-size="13" fill="#777">(colors follow the standard 10-wire Dupont ribbon order)</text>
+
+  <!-- front_left -->
+  <rect x="60" y="928" width="310" height="86" rx="8" fill="#fff" stroke="#ccc"/>
+  <text x="76" y="951" font-size="14" font-weight="bold" fill="#111">FRONT LEFT &#8212; front_left</text>
+  <circle cx="86" cy="972" r="7" fill="#2e9e44"/>
+  <text x="102" y="977" font-size="13.5" fill="#333">TRIG &#183; green &#183; GPIO 6 &#183; pin 31</text>
+  <circle cx="86" cy="996" r="7" fill="#1d66d6"/>
+  <text x="102" y="1001" font-size="13.5" fill="#333">ECHO &#183; blue &#183; GPIO 5 &#183; pin 29</text>
+
+  <!-- front_center -->
+  <rect x="395" y="928" width="310" height="86" rx="8" fill="#fff" stroke="#ccc"/>
+  <text x="411" y="951" font-size="14" font-weight="bold" fill="#111">FRONT CENTER &#8212; front_center</text>
+  <circle cx="421" cy="972" r="7" fill="#f77f00"/>
+  <text x="437" y="977" font-size="13.5" fill="#333">TRIG &#183; orange &#183; GPIO 27 &#183; pin 13</text>
+  <circle cx="421" cy="996" r="7" fill="#f5c400"/>
+  <text x="437" y="1001" font-size="13.5" fill="#333">ECHO &#183; yellow &#183; GPIO 22 &#183; pin 15</text>
+
+  <!-- front_right -->
+  <rect x="730" y="928" width="310" height="86" rx="8" fill="#fff" stroke="#ccc"/>
+  <text x="746" y="951" font-size="14" font-weight="bold" fill="#111">FRONT RIGHT &#8212; front_right</text>
+  <circle cx="756" cy="972" r="7" fill="#7b4a12"/>
+  <text x="772" y="977" font-size="13.5" fill="#333">TRIG &#183; brown &#183; GPIO 23 &#183; pin 16</text>
+  <circle cx="756" cy="996" r="7" fill="#d62828"/>
+  <text x="772" y="1001" font-size="13.5" fill="#333">ECHO &#183; red &#183; GPIO 24 &#183; pin 18</text>
+
+  <!-- back_left -->
+  <rect x="60" y="1028" width="310" height="86" rx="8" fill="#fff" stroke="#ccc"/>
+  <text x="76" y="1051" font-size="14" font-weight="bold" fill="#111">BACK LEFT &#8212; back_left</text>
+  <circle cx="86" cy="1072" r="7" fill="#ffffff" stroke="#444" stroke-width="1.2"/>
+  <text x="102" y="1077" font-size="13.5" fill="#333">TRIG &#183; white &#183; GPIO 1 &#183; pin 28</text>
+  <circle cx="86" cy="1096" r="7" fill="#000000"/>
+  <text x="102" y="1101" font-size="13.5" fill="#333">ECHO &#183; black &#183; GPIO 25 &#183; pin 22</text>
+
+  <!-- back_right -->
+  <rect x="395" y="1028" width="310" height="86" rx="8" fill="#fff" stroke="#ccc"/>
+  <text x="411" y="1051" font-size="14" font-weight="bold" fill="#111">BACK RIGHT &#8212; back_right</text>
+  <circle cx="421" cy="1072" r="7" fill="#7b2fbe"/>
+  <text x="437" y="1077" font-size="13.5" fill="#333">TRIG &#183; purple &#183; GPIO 7 &#183; pin 26</text>
+  <circle cx="421" cy="1096" r="7" fill="#8c8c8c"/>
+  <text x="437" y="1101" font-size="13.5" fill="#333">ECHO &#183; gray &#183; GPIO 8 &#183; pin 24</text>
+
+  <!-- notes -->
+  <text x="730" y="1051" font-size="13" fill="#555" font-weight="bold">Notes</text>
+  <text x="730" y="1071" font-size="12.5" fill="#555">&#8226; All 5 sensors run on 3.3V &#8212; VCC to 3V3 (pins 1/17).</text>
+  <text x="730" y="1091" font-size="12.5" fill="#555">&#8226; ECHO connects directly to GPIO; no level shifter needed.</text>
+
+  <text x="60" y="1146" font-size="12.5" fill="#555">&#8226; GND of all sensors &#8594; any Ground pin (6, 9, 14, 20, 25, 30, 34, 39).</text>
+  <text x="60" y="1166" font-size="12.5" fill="#555">&#8226; Grayed pins are already occupied: motors (GPIO 12, 13, 16, 20) and IMU I2C (GPIO 2, 3) &#8212; do not reuse them.</text>
+  <text x="60" y="1186" font-size="12.5" fill="#555">&#8226; GPIO 1 (back_left TRIG) is also ID_SC, the HAT EEPROM ID pin: fine as GPIO here, but free it if a HAT is ever stacked.</text>
+</svg>
