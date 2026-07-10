@@ -339,5 +339,5 @@ class NavigationController:
         # Positive steer = toward the car's right. If our heading is left of the
         # target (target - heading > 0), steer right to come back.
         err = angle_diff(self.target_heading, self.heading_rel)
-        trim = cfg.HEADING_HOLD_GAIN * err
+        trim = -cfg.HEADING_HOLD_GAIN * err
         return max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, trim))
