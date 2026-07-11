@@ -185,13 +185,13 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
                   else angle_diff(nav.bearing_to_pit() + 180.0, 0.0))
         _spin_to_heading(logger, motors, cfg, imu, nav, target)
 
-    rev_s = _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
+    rev_s = _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
     logger.log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
 
     logger.log("dispose", step="dump", hold_s=cfg.DISPOSE_HOLD_S)
     disposer.dump()
 
-    _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
+    _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
     logger.log("dispose", step="clear", cm=cfg.DISPOSE_REVERSE_CM)
 
     # Point back down the lane before handing control back to the sweep.
