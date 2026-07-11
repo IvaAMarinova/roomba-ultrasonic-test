@@ -373,6 +373,112 @@ def test_pit_y27_close_sensors_do_not_end_lane():
     assert cmd.action is Action.FORWARD
 
 
+def test_sustained_contact_stops_despite_odometry_lag():
+    """Replicate lane-0 grind: 17 cm agreeing at y~46 must turn, not keep driving."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = 46.0
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=18.6, front_right=16.9), yaw=1.0, dt=0.1)
+    assert cmd.action is Action.TURN_RIGHT
+    assert "contact" in cmd.reason
+
+
+def test_contact_turn_reanchors_pose():
+    """Contact lane-end must snap y to the wall before U-turn, not keep stale odometry."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = 46.0
+    n.y = 46.0
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=18.6, front_right=16.9), yaw=1.0, dt=0.1)
+    assert cmd.action is Action.TURN_RIGHT
+    assert abs(n.y - (config.ARENA_LENGTH_CM - 17.75)) < 2.0
+    n.complete_turn()
+    assert abs(n.lane_distance - 17.75) < 2.0
+
+
+def test_contact_stop_suppressed_at_pit():
+    """Post-dispose at pit: very close readings must not U-turn over the pit."""
+    n = nav(cfg_with(PIT_X_CM=75.0, PIT_Y_CM=0.0, PIT_ARRIVAL_RADIUS_CM=50.0))
+    n._lane_index = 2
+    n.x, n.y = 70.0, 17.6
+    n.lane_distance = 17.6
+    n._pit_handled = True
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=11.0, front_right=8.0), yaw=0.0, dt=0.1)
+    assert cmd.action is Action.FORWARD
+
+
+# -- faulty-run regressions (2026-07-11 logs: lane-0 wall grind + y-snap) ----
+
+# Nav tick immediately before the bogus y=122 -> 194 jump in the faulty run.
+_LANE0_PRE_SNAP = dict(
+    front_left=16.625518700189446,
+    front_right=16.626153249815445,
+    yaw=-0.021148969263835374,
+    lane_distance=122.66720000000008,
+)
+
+# First sustained ~17 cm contact tick in the faulty run (odometry still ~46 cm).
+_LANE0_GRIND = dict(
+    front_left=18.626855100053774,
+    front_right=16.931852000067238,
+    yaw=1.475579440272186,
+    lane_distance=46.00019999999999,
+)
+
+
+def test_faulty_run_mid_lane_17cm_does_not_snap_y_to_far_wall():
+    """Faulty run: at y~123, 17 cm must not fuse lane_distance to ~195 while cruising."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = _LANE0_PRE_SNAP["lane_distance"]
+    n.y = _LANE0_PRE_SNAP["lane_distance"]
+    n.decide(reading(
+        front_left=_LANE0_PRE_SNAP["front_left"],
+        front_right=_LANE0_PRE_SNAP["front_right"],
+    ), yaw=_LANE0_PRE_SNAP["yaw"], dt=0.1)
+    assert n.lane_distance < 130.0
+    assert abs(n.y - 122.67) < 5.0
+
+
+def test_faulty_run_grind_ticks_turn_not_forward():
+    """Faulty run: 17 cm at y~46 must U-turn within persist, not keep cruising."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = _LANE0_GRIND["lane_distance"]
+    n.y = _LANE0_GRIND["lane_distance"]
+    actions = []
+    for _ in range(config.WALL_PERSIST_TICKS + 2):
+        cmd = n.decide(reading(
+            front_left=_LANE0_GRIND["front_left"],
+            front_right=_LANE0_GRIND["front_right"],
+        ), yaw=_LANE0_GRIND["yaw"], dt=0.1)
+        actions.append(cmd.action)
+        if cmd.action is not Action.FORWARD:
+            break
+    assert Action.TURN_RIGHT in actions
+    assert actions.count(Action.FORWARD) <= config.WALL_PERSIST_TICKS
+
+
+def test_faulty_run_lane1_pose_after_contact_turn():
+    """Faulty run: contact turn at y~46 must leave lane 1 at far wall, not y~46."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = _LANE0_GRIND["lane_distance"]
+    n.y = _LANE0_GRIND["lane_distance"]
+    for _ in range(config.WALL_PERSIST_TICKS):
+        n.decide(reading(
+            front_left=_LANE0_GRIND["front_left"],
+            front_right=_LANE0_GRIND["front_right"],
+        ), yaw=_LANE0_GRIND["yaw"], dt=0.1)
+    n.complete_turn()
+    assert abs(n.y - 194.7) < 3.0
+    assert abs(n.lane_distance - 17.3) < 3.0
+    cmd = n.decide(reading(), yaw=-180.0, dt=0.1)
+    assert cmd.action is Action.FORWARD
+    assert abs(n.y - 194.7) < 5.0
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0

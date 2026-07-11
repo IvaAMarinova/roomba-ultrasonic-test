@@ -162,20 +162,24 @@ class NavigationController:
                 Action.DISPOSE, speed=0.0,
                 reason=f"reached pit ({self.collector}) -> dispose"))
 
-        # 2) End of lane? Primary = front sensors agree on a close wall AND odometry
-        #    expects the end wall nearby (rejects a side obstacle when left/right
-        #    disagree). Backstop = odometry if no qualifying wall is seen.
+        # 2) End of lane? Primary = front sensors agree on a close wall AND either
+        #    odometry expects the end wall nearby (rejects a side obstacle when
+        #    left/right disagree) OR the reading is sustained contact-close (odometry
+        #    lagged but we're physically against the far wall). Backstop = odometry
+        #    if no qualifying wall is seen. Contact-close is suppressed at the pit.
         end_dist, end_agree = self._lane_end_wall(readings)
         expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
         wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
         heading_ok = (not self._has_heading
                       or abs(angle_diff(self.target_heading, self.heading_rel))
                       <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
-        wall_stop = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
-                     and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
-                     and wall_plausible
-                     and heading_ok)
-        self._wall_persist = self._wall_persist + 1 if wall_stop else 0
+        contact_close = getattr(cfg, "WALL_CONTACT_STOP_CM", 25.0)
+        end_hold = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
+                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+                    and heading_ok
+                    and not self._at_pit()
+                    and (wall_plausible or end_dist <= contact_close))
+        self._wall_persist = self._wall_persist + 1 if end_hold else 0
         wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
         # Odometry backstop only applies when we have NO believed wall (total
         # dropout). With a wall in view the persistence-gated trigger governs, so
@@ -185,6 +189,12 @@ class NavigationController:
                         and heading_ok)
 
         if wall_trigger or odo_backstop:
+            if wall_trigger and not wall_plausible:
+                self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
+                                                  cfg.ARENA_LENGTH_CM))
+                forward = math.cos(math.radians(self.target_heading)) >= 0.0
+                self.y = (cfg.START_Y_CM + self.lane_distance if forward
+                          else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
             # Was that the end of the LAST lane? Then the arena is swept -> done.
             if self._lane_index >= cfg.NUM_LANES - 1:
                 self._done = True
@@ -197,8 +207,14 @@ class NavigationController:
             self._last_turn = turn
             self.mode = Mode.TURNING
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
-            trigger = (f"wall {end_dist:.0f}cm (x{end_agree} agree)"
-                       if wall_trigger else "odometry backstop (no wall seen)")
+            if wall_trigger:
+                if wall_plausible:
+                    trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
+                else:
+                    trigger = (f"wall contact {end_dist:.0f}cm "
+                               f"(x{end_agree} agree, odometry lag)")
+            else:
+                trigger = "odometry backstop (no wall seen)"
             return self._remember(Command(
                 action, speed=cfg.TURN_SPEED,
                 reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
