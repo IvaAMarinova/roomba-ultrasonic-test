@@ -62,8 +62,11 @@ class MotorDriver:
         self._set_side(logger, "right", -speed)
 
     def stop(self, logger):
-        self._set_side(logger, "left", 0.0)
-        self._set_side(logger, "right", 0.0)
+        try:
+            self._set_side(logger, "left", 0.0)
+            self._set_side(logger, "right", 0.0)
+        except RuntimeError:
+            pass  # GPIO already torn down at interpreter exit
 
     # -- hardware boundary --------------------------------------------------
 
@@ -96,4 +99,5 @@ class MotorDriver:
         # Drop PWM refs before GPIO.cleanup(); otherwise PWM.__del__ runs at
         # interpreter shutdown and tries to stop() on an already-freed handle.
         self._pwm.clear()
-        GPIO.cleanup()
+        if _HAS_GPIO and GPIO.getmode() is not None:
+            GPIO.cleanup()

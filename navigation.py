@@ -155,10 +155,12 @@ class NavigationController:
                 Action.DISPOSE, speed=0.0,
                 reason=f"reached pit ({self.collector}) -> dispose"))
 
-        # 2) End of lane? Primary = a believed wall within the standoff, held for
-        #    a few ticks. Backstop = odometry distance if the wall is never seen.
-        wall_stop = (self.pos_source == "WALL"
-                     and self.front_wall_cm <= cfg.FRONT_STOP_DISTANCE_CM)
+        # 2) End of lane? Primary = nearest front reading within standoff (uses min
+        #    of sensors when they disagree -- important with 2 sensors / asymmetric
+        #    walls). Backstop = odometry if nothing finite is seen ahead.
+        end_dist, end_agree = self._end_wall_ahead(readings)
+        wall_stop = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
+                     and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
         self._wall_persist = self._wall_persist + 1 if wall_stop else 0
         wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
         # Odometry backstop only applies when we have NO believed wall (total
@@ -180,7 +182,7 @@ class NavigationController:
             self._last_turn = turn
             self.mode = Mode.TURNING
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
-            trigger = (f"wall {self.front_wall_cm:.0f}cm (x{self.front_agree} agree)"
+            trigger = (f"wall {end_dist:.0f}cm (x{end_agree} agree)"
                        if wall_trigger else "odometry backstop (no wall seen)")
             return self._remember(Command(
                 action, speed=cfg.TURN_SPEED,
@@ -235,6 +237,31 @@ class NavigationController:
         Used by main.py's blocking return-to-pit maneuver to drive up to a wall.
         """
         return self._front_wall(readings)
+
+    def end_wall_ahead(self, readings):
+        """Conservative end-wall distance for lane-end / drive-to-wall stops."""
+        return self._end_wall_ahead(readings)
+
+    def set_pose(self, x=None, y=None, lane_distance=None, target_heading=None):
+        """Overwrite pose after a blocking sensor-referenced maneuver (return legs)."""
+        cfg = self.cfg
+        if x is not None:
+            self.x = x
+        if target_heading is not None:
+            self.target_heading = target_heading
+        if lane_distance is not None:
+            self.lane_distance = max(0.0, min(lane_distance, cfg.ARENA_LENGTH_CM))
+        elif y is not None:
+            forward = math.cos(math.radians(self.target_heading)) >= 0.0
+            along = y - cfg.START_Y_CM
+            if forward:
+                self.lane_distance = max(0.0, min(along, cfg.ARENA_LENGTH_CM))
+            else:
+                self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - along,
+                                                  cfg.ARENA_LENGTH_CM))
+        if y is not None:
+            self.y = y
+        self._wall_persist = 0
 
     def bearing_to_pit(self):
         """Heading (start-relative deg) pointing from the car toward the pit."""
@@ -293,8 +320,15 @@ class NavigationController:
             # Believable ONLY if it's near where odometry expects the end wall --
             # this rejects a mid-lane object (a block) that fooled the agreement.
             expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
-            if abs(expected_gap - front_dist) <= cfg.WALL_EXPECT_TOL_CM:
-                self.lane_distance = cfg.ARENA_LENGTH_CM - front_dist  # re-anchor to the wall
+            plausible = (front_dist <= cfg.ARENA_LENGTH_CM
+                         and abs(expected_gap - front_dist) <= cfg.WALL_EXPECT_TOL_CM)
+            # Reject a far phantom wall when odometry says we're still near the
+            # start of the lane (e.g. pit gap / open area behind the rover).
+            near_start = self.lane_distance < cfg.ARENA_LENGTH_CM * 0.35
+            far_phantom = front_dist > cfg.ARENA_LENGTH_CM * 0.75
+            if plausible and not (near_start and far_phantom):
+                self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - front_dist,
+                                                  cfg.ARENA_LENGTH_CM))
                 self.front_wall_cm = front_dist
                 self.pos_source = "WALL"
             else:
@@ -306,6 +340,14 @@ class NavigationController:
             self.front_wall_cm = INF
             self.pos_source = "BRIDGE"
 
+        # While bridging, still surface the nearest front reading for slow/stop logic.
+        end_dist, end_agree = self._end_wall_ahead(readings)
+        if self.pos_source == "BRIDGE" and end_agree >= cfg.FRONT_AGREE_MIN_COUNT:
+            self.front_wall_cm = end_dist
+            self.front_agree = end_agree
+
+        self.lane_distance = max(0.0, min(self.lane_distance, cfg.ARENA_LENGTH_CM))
+
         # Along-lane y from lane_distance in the current lane's direction. Cross-lane
         # x comes purely from lane counting (set in complete_turn); the IMU
         # heading-hold keeps the car square so it stays centred in the lane.
@@ -316,6 +358,18 @@ class NavigationController:
         if self._pit_handled and not self._at_pit():
             self._pit_handled = False
 
+    def _enabled_front_distances(self, readings):
+        cfg = self.cfg
+        out = []
+        for name in cfg.FRONT_SENSORS:
+            spec = cfg.SENSORS.get(name, {})
+            if not spec.get("enabled", True):
+                continue
+            d = readings.get(name, INF)
+            if d != INF:
+                out.append(d)
+        return out
+
     def _front_wall(self, readings):
         """Believed distance to the wall ahead + how many front sensors agree.
 
@@ -325,8 +379,7 @@ class NavigationController:
         or (INF, <count>) when fewer than the required number agree.
         """
         cfg = self.cfg
-        finite = sorted(d for d in (readings.get(n, INF) for n in cfg.FRONT_SENSORS)
-                        if d != INF)
+        finite = sorted(self._enabled_front_distances(readings))
         if len(finite) < cfg.FRONT_AGREE_MIN_COUNT:
             return INF, len(finite)
         candidate = statistics.median(finite)
@@ -334,6 +387,21 @@ class NavigationController:
         if len(cluster) >= cfg.FRONT_AGREE_MIN_COUNT:
             return statistics.median(cluster), len(cluster)
         return INF, len(cluster)
+
+    def _end_wall_ahead(self, readings):
+        """Nearest believable obstacle ahead -- for lane-end and drive-to-wall.
+
+        Prefers a agreeing cluster (_front_wall). If sensors disagree (common with
+        only two front sensors or an asymmetric end wall), falls back to the minimum
+        finite reading so we still stop at the closest surface.
+        """
+        dist, agree = self._front_wall(readings)
+        if agree >= self.cfg.FRONT_AGREE_MIN_COUNT:
+            return dist, agree
+        finite = self._enabled_front_distances(readings)
+        if len(finite) >= self.cfg.FRONT_AGREE_MIN_COUNT:
+            return min(finite), len(finite)
+        return INF, len(finite)
 
     def _at_pit(self):
         if self._lane_index != self._pit_lane:

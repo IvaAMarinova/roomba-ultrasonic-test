@@ -6,7 +6,7 @@ import math
 # ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
 # ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
 ARENA_WIDTH_CM = 150.0        # across the lanes (the car steps sideways here)
-ARENA_LENGTH_CM = 160.0       # along each lane (the long axis the car runs)
+ARENA_LENGTH_CM = 212.0       # along each lane (the long axis the car runs)
 
 ROBOT_WIDTH_CM = 50.0         # physical width of the car
 
@@ -210,7 +210,7 @@ TURN_SPEED = 0.1                 # in-place rotation speed
 # tracks it automatically -- change DRIVE_SPEED and the distance estimate follows, no
 # separate re-measure. To calibrate: drive at DRIVE_SPEED for a known time, cm/s =
 # distance/time, then FULL_SPEED_CM_PER_S = that / DRIVE_SPEED.
-FULL_SPEED_CM_PER_S = 250.0       # e.g. 30 cm/s at DRIVE_SPEED 0.6 -> 30 / 0.6 = 50
+FULL_SPEED_CM_PER_S = 153.334     # e.g. 30 cm/s at DRIVE_SPEED 0.6 -> 30 / 0.6 = 50
 
 # cm/s at the normal cruise speed. DERIVED (not hardcoded). It is only a fallback/
 # bridge value now that position is wall-referenced: it bridges along-lane position

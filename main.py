@@ -100,11 +100,20 @@ def _spin_90(logger, motors, cfg, direction, imu=None):
     _spin_timed(logger, motors, cfg, direction)
 
 
+def _heading_aligned(imu, nav, target_rel, tol):
+    """True when IMU heading is within `tol` degrees of `target_rel`."""
+    cur = nav.rel_heading(imu.yaw()) if imu is not None else None
+    if cur is None:
+        return False
+    return abs(angle_diff(target_rel, cur)) <= tol
+
+
 def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
     """Rotate in place until the car's heading ~= target_rel (start-relative deg).
 
-    Re-picks the turn direction each poll so a small overshoot is corrected. No-op
-    (and returns False) if no IMU heading is available.
+    Spins continuously in one direction (no per-tick direction flip) so the car
+    does not hunt in place near ±90° / ±180°. A single slow correction pass runs
+    only if the first spin overshoots.
     """
     cur = nav.rel_heading(imu.yaw()) if imu is not None else None
     if cur is None:
@@ -115,17 +124,42 @@ def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
         logger.log("orient", step="skip", target=target_rel, current=cur, error=err0)
         return True
     logger.log("orient", step="turn", target=target_rel, current=cur, error=err0)
-    deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
+
+    direction = "right" if err0 > 0 else "left"
+    turn_fn = motors.turn_right if direction == "right" else motors.turn_left
+    timeout = cfg.IMU_TURN_TIMEOUT_S * max(1.0, abs(err0) / cfg.TURN_ANGLE_DEG)
+    deadline = time.time() + timeout
+    turn_fn(logger, cfg.TURN_SPEED)
     while time.time() < deadline:
-        cur = nav.rel_heading(imu.yaw())
-        if cur is not None:
-            err = angle_diff(target_rel, cur)
-            if abs(err) <= cfg.IMU_TURN_TOLERANCE_DEG:
-                break
-            (motors.turn_right if err > 0 else motors.turn_left)(logger, cfg.TURN_SPEED)
         time.sleep(cfg.IMU_TURN_POLL_S)
+        cur = nav.rel_heading(imu.yaw())
+        if cur is None:
+            continue
+        if abs(angle_diff(target_rel, cur)) <= cfg.IMU_TURN_TOLERANCE_DEG:
+            break
     motors.stop(logger)
-    return True
+
+    cur = nav.rel_heading(imu.yaw())
+    if cur is not None:
+        err = angle_diff(target_rel, cur)
+        if (abs(err) > cfg.IMU_TURN_TOLERANCE_DEG
+                and (err0 > 0) != (err > 0)):
+            fine = motors.turn_left if err < 0 else motors.turn_right
+            fine(logger, cfg.TURN_SPEED * 0.5)
+            fine_deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S * 0.5
+            while time.time() < fine_deadline:
+                time.sleep(cfg.IMU_TURN_POLL_S)
+                cur = nav.rel_heading(imu.yaw())
+                if cur is not None and abs(angle_diff(target_rel, cur)) <= cfg.IMU_TURN_TOLERANCE_DEG:
+                    break
+            motors.stop(logger)
+
+    aligned = _heading_aligned(imu, nav, target_rel, cfg.IMU_TURN_TOLERANCE_DEG)
+    if not aligned:
+        cur = nav.rel_heading(imu.yaw())
+        logger.log("orient", step="incomplete", target=target_rel,
+                   current=cur, error=angle_diff(target_rel, cur) if cur is not None else None)
+    return aligned
 
 
 def _advance_one_lane(logger, motors, cfg):
@@ -216,17 +250,32 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
     it wants and reads it with the front sensors), so it lands at a consistent gap
     regardless of how far it had to go -- pass a larger stop_distance to stop the car
     at a known distance FROM a wall (e.g. to reach the pit's middle off the far wall).
+
+    Requires the car to be oriented within tolerance before a close-wall reading
+    counts as "arrived", and enforces a short minimum drive time so a wall that is
+    already in front (e.g. the far wall while still facing +y) cannot skip the leg.
     """
     if stop_distance is None:
         stop_distance = cfg.FRONT_STOP_DISTANCE_CM
-    _spin_to_heading(logger, motors, cfg, imu, nav, target_heading)
+    tol = cfg.IMU_TURN_TOLERANCE_DEG
+    if not _spin_to_heading(logger, motors, cfg, imu, nav, target_heading):
+        logger.log("drive_wall", step="warn", reason="orient incomplete",
+                   target=target_heading)
     nav.target_heading = target_heading
     cm_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED) if cfg.DRIVE_SPEED else 0.0
     deadline = time.time() + (2.0 * cfg.ARENA_LENGTH_CM / cm_s if cm_s > 0 else 30.0)
+    min_ticks = max(5, int(0.5 / period))
+    ticks = 0
     while time.time() < deadline:
         readings = sensors.read_all()
-        front, agree = nav.front_wall(readings)
-        if agree >= cfg.FRONT_AGREE_MIN_COUNT and front <= stop_distance:
+        front, agree = nav.end_wall_ahead(readings)
+        ticks += 1
+        if (ticks >= min_ticks
+                and agree >= cfg.FRONT_AGREE_MIN_COUNT
+                and front <= stop_distance
+                and _heading_aligned(imu, nav, target_heading, tol)):
+            logger.log("drive_wall", step="stop", front=front, agree=agree,
+                       heading=target_heading)
             break
         cur = nav.rel_heading(imu.yaw() if imu is not None else None)
         steer = 0.0
@@ -241,31 +290,33 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
 def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period):
     """After the sweep: go back to the pit (mid start wall) and dump the remainder.
 
-    The pit is in the MIDDLE of the start wall (y=0), where no wall marks its
-    sideways position -- so we reach the left/right walls with the FRONT sensors
-    (turning to face each) and measure across:
-      1. Drive to the start wall (the pit's side), wherever the sweep ended.
-      2. Drive to the LEFT wall (exact x), then drive PIT_X across to the pit's middle.
-      3. Face the start wall so the back points at the pit, reverse in, and dump.
+    Sensor-referenced legs re-anchor nav pose after each wall so stale odometry
+    from the sweep cannot confuse later legs. The pit is on the start wall (y=0):
+      1. Face the start wall and drive to it (from wherever the sweep ended).
+      2. Face -x to the left wall, then +x until the right wall marks pit x.
+      3. Face +y, reverse into the pit, and dump.
     """
     print("[return] coverage complete -> returning to the pit for the final dump")
 
-    # 1) Onto the pit's wall (start wall, y=0). heading 180 = -y.
+    standoff = cfg.FRONT_STOP_DISTANCE_CM
+
     print("[return] leg 1: drive to the start wall (the pit's side)")
     _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=180.0)
+    nav.set_pose(y=standoff, target_heading=180.0)
 
-    # 2) To the pit's middle -- fully front-wall-referenced (no odometry):
-    #    go to the left wall, then face +x and drive until the FAR (right) wall is
-    #    (WIDTH - PIT_X) away, which puts the car at x = PIT_X.
     print("[return] leg 2a: face -x, drive to the left wall (front sensors)")
     _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
+    nav.set_pose(x=cfg.START_X_CM + standoff, target_heading=-90.0)
+
     print("[return] leg 2b: face +x, drive until the right wall marks the pit's middle")
     _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=90.0,
                    stop_distance=cfg.ARENA_WIDTH_CM - cfg.PIT_X_CM)
+    nav.set_pose(x=cfg.PIT_X_CM, target_heading=90.0)
 
-    # 3) Final dump: face +y so the BACK points at the start-wall pit, reverse in.
     print("[return] leg 3: final dump into the pit")
+    nav.target_heading = 0.0
     _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
+    nav.set_pose(x=cfg.PIT_X_CM, y=standoff, target_heading=0.0)
     print("[return] final dump complete -- arena swept and emptied.")
 
 
@@ -376,7 +427,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
 
             if nav.mode is Mode.DONE:
                 print(f"[nav] coverage complete: swept all {cfg.NUM_LANES} lanes")
-                _return_to_pit_and_dispose(motors, cfg, imu, nav, disposer, sensors, period)
+                _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period)
                 break
             time.sleep(period)
     finally:

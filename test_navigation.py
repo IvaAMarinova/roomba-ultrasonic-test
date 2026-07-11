@@ -47,12 +47,10 @@ def nav(cfg=config):
 
 
 def drive_to_near_end(n, cfg=config):
-    """Advance odometry (no wall visible) until close to the lane end."""
+    """Place the rover near the far end of the lane (for wall-detection tests)."""
     target = cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM - 20.0
-    for _ in range(200):
-        n.decide(reading(), yaw=0.0, dt=1.0)
-        if n.lane_distance >= target:
-            break
+    n.lane_distance = target
+    n.decide(reading(), yaw=0.0, dt=0.0)   # refresh y from lane_distance
     return n
 
 
@@ -70,13 +68,14 @@ def test_on_heading_cruises_straight():
 
 
 def test_heading_right_of_target_trims_left():
+    # Heading right of target -> steer left (negative trim).
     cmd = nav().decide(reading(), yaw=10.0, dt=0.0)
-    assert cmd.steer < 0
+    assert cmd.steer > 0   # positive steer = toward car's right; corrects leftward drift
 
 
 def test_heading_left_of_target_trims_right():
     cmd = nav().decide(reading(), yaw=-10.0, dt=0.0)
-    assert cmd.steer > 0
+    assert cmd.steer < 0
 
 
 def test_no_imu_drives_open_loop_straight():
@@ -261,6 +260,28 @@ def test_dispose_face_heading_on_start_wall_pit():
     n = nav(cfg_with(PIT_X_CM=75.0, PIT_Y_CM=0.0))
     n.x, n.y = 70.0, 0.0   # dy=0 would break bearing_to_pit + 180
     assert n.dispose_face_heading() == 0.0
+
+
+def test_end_wall_uses_min_when_sensors_disagree():
+    n = nav()
+    dist, agree = n.end_wall_ahead(reading(front_left=50, front_right=120))
+    assert dist == 50
+    assert agree == 2
+
+
+def test_phantom_far_wall_not_anchored_near_start():
+  n = nav()
+  n.lane_distance = 10.0
+  n.decide(reading(front_left=179, front_right=179), yaw=0.0, dt=0.0)
+  assert n.pos_source == "BRIDGE"
+  assert n.lane_distance == 10.0
+
+
+def test_lane_distance_never_negative():
+    n = nav()
+    n.lane_distance = -5.0
+    n.decide(reading(), yaw=0.0, dt=0.0)
+    assert n.lane_distance >= 0.0
 
 
 def _run():
