@@ -291,13 +291,18 @@ class Disposer:
         self.cfg = cfg
         self._door = BackServo(cfg)
 
-    def dump(self):
+    def dump_cycle(self):
         """Open the rear door, hold while balls fall out, then close."""
-        print("[disposer] DUMP: opening rear door")
+        print("[disposer] opening rear door")
         self._door.open_door()
         time.sleep(self.cfg.DISPOSE_HOLD_S)
-        print("[disposer] DUMP: closing rear door")
+        print("[disposer] closing rear door")
         self._door.close_door()
+
+    def dump(self):
+        """Run one disposal dump cycle (same as at the pit)."""
+        print("[disposer] DUMP")
+        self.dump_cycle()
 
     def cleanup(self):
         self._door.cleanup()
