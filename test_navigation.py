@@ -181,7 +181,7 @@ def test_stops_when_all_lanes_swept():
     n = nav(cfg)
     cmd = None
     for _ in range(400):
-        cmd = n.decide(reading(), yaw=0.0, dt=1.0)
+        cmd = n.decide(reading(), yaw=n.target_heading, dt=1.0)
         if cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
             n.complete_turn()          # emulate main executing the U-turn
         elif cmd.action is Action.STOP:
@@ -196,14 +196,14 @@ def test_done_latches_stopped():
                    PIT_X_CM=-1e4, PIT_Y_CM=-1e4)
     n = nav(cfg)
     for _ in range(400):
-        c = n.decide(reading(), yaw=0.0, dt=1.0)
+        c = n.decide(reading(), yaw=n.target_heading, dt=1.0)
         if c.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
             n.complete_turn()
         elif c.action is Action.STOP:
             break
     # Once done, further ticks keep returning STOP (never resumes sweeping).
-    assert n.decide(reading(), yaw=0.0, dt=1.0).action is Action.STOP
-    assert n.decide(front_wall(20), yaw=0.0, dt=1.0).action is Action.STOP
+    assert n.decide(reading(), yaw=n.target_heading, dt=1.0).action is Action.STOP
+    assert n.decide(front_wall(20), yaw=n.target_heading, dt=1.0).action is Action.STOP
 
 
 # -- cross-lane position from lane counting ---------------------------------
@@ -299,6 +299,78 @@ def test_lane_distance_never_negative():
     n.lane_distance = -5.0
     n.decide(reading(), yaw=0.0, dt=0.0)
     assert n.lane_distance >= 0.0
+
+
+# -- post-dispose / blocking-gap regressions (from 2026-07 run logs) --------
+
+def test_large_dt_does_not_bridge_odometry():
+    """Blocking dispose/scoop gaps must not integrate seconds of forward motion."""
+    n = nav()
+    n.lane_distance = 27.5
+    n._last_action = Action.FORWARD
+    n._last_speed = config.DRIVE_SPEED
+    n.decide(reading(), yaw=0.0, dt=5.0)
+    assert n.lane_distance < 40.0
+
+
+def test_note_blocking_clears_odometry_state():
+    n = nav()
+    n.lane_distance = 27.5
+    n._last_action = Action.FORWARD
+    n._last_speed = config.DRIVE_SPEED
+    n.note_blocking_maneuver()
+    before = n.lane_distance
+    n.decide(reading(), yaw=0.0, dt=2.0)
+    assert n.lane_distance == before
+
+
+def test_complete_dispose_clears_odometry_bridge():
+    """After dispose, a long dt tick must not jump y from pit (~27) to far wall."""
+    n = nav(cfg_with(PIT_X_CM=75.0, PIT_Y_CM=0.0, PIT_ARRIVAL_RADIUS_CM=50.0))
+    n._lane_index = 2
+    n.x, n.y = 70.0, 27.5
+    n.lane_distance = 27.5
+    n.target_heading = 0.0
+    n._last_action = Action.FORWARD
+    n._last_speed = config.DRIVE_SPEED
+    n.complete_dispose()
+    n.decide(reading(front_left=11.0, front_right=8.0), yaw=10.0, dt=2.6)
+    assert n.lane_distance < 80.0
+    assert abs(n.y - 27.5) < 55.0
+
+
+def test_wall_not_anchored_when_heading_misaligned():
+    """Inflated odometry + close front reading while sideways must not snap to y=202."""
+    n = nav()
+    n.lane_distance = 147.0
+    n.heading_rel = -79.0
+    n.target_heading = 0.0
+    n.decide(reading(front_left=10.0, front_right=8.0), yaw=-79.0, dt=0.0)
+    assert n.pos_source == "BRIDGE"
+    assert abs(n.lane_distance - 147.0) < 5.0
+
+
+def test_lane_end_rejected_when_heading_misaligned():
+    """Post-dispose run: wall at 13 cm while heading ~-77 must not trigger U-turn."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = 199.0
+    n.heading_rel = -77.0
+    n.target_heading = 0.0
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=13.0, front_right=13.0),
+                       yaw=-77.0, dt=0.2)
+    assert cmd.action is Action.FORWARD
+
+
+def test_pit_y27_close_sensors_do_not_end_lane():
+    """Lane 2 at pit: disagreeing side readings must not end the lane early."""
+    n = nav()
+    n.lane_distance = 27.5
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=29.0, front_right=28.0), yaw=0.0, dt=0.2)
+    assert cmd.action is Action.FORWARD
 
 
 def _run():

@@ -178,6 +178,7 @@ FRONT_AGREE_TOL_CM = 15.0        # front readings within this of each other "agr
 FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
 WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
 WALL_PERSIST_TICKS = 3           # consecutive ticks the wall-stop must hold before turning
+WALL_HEADING_ALIGN_DEG = 30.0    # only fuse / stop on a front wall when square to the lane heading
 
 # ---------------------------------------------------------------------------
 # Cross-lane (x) position.
@@ -256,6 +257,7 @@ TURN_TIME_S = 4
 USE_IMU_TURN = True              # True = IMU heading-feedback turns, False = timed (TURN_TIME_S)
 TURN_ANGLE_DEG = 90.0            # target rotation for one end-of-lane spin
 IMU_TURN_TOLERANCE_DEG = 3.0     # stop this many deg early to allow for coast/momentum
+ORIENT_SKIP_DEG = 15.0           # skip dispose / return spins when already within this of target
 IMU_TURN_TIMEOUT_S = TURN_TIME_S * 2.5  # safety cap: never spin longer than this
 IMU_GLITCH_MAX_STEP_DEG = 45.0   # per-sample heading jumps larger than this are
                                  # treated as corrupted I2C reads and ignored

@@ -122,6 +122,13 @@ class NavigationController:
         self._last_speed = 0.0
         self._last_action = Action.STOP
 
+    def note_blocking_maneuver(self):
+        """Call after a blocking U-turn / dispose so the next tick does not odometry-bridge a long gap."""
+        self._last_action = Action.STOP
+        self._last_speed = 0.0
+        self._wall_persist = 0
+        self.pos_source = "BRIDGE"
+
     # -- setup --------------------------------------------------------------
 
     def set_origin(self, yaw0):
@@ -161,16 +168,21 @@ class NavigationController:
         end_dist, end_agree = self._lane_end_wall(readings)
         expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
         wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
+        heading_ok = (not self._has_heading
+                      or abs(angle_diff(self.target_heading, self.heading_rel))
+                      <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
         wall_stop = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                      and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
-                     and wall_plausible)
+                     and wall_plausible
+                     and heading_ok)
         self._wall_persist = self._wall_persist + 1 if wall_stop else 0
         wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
         # Odometry backstop only applies when we have NO believed wall (total
         # dropout). With a wall in view the persistence-gated trigger governs, so
         # a close wall re-anchoring lane_distance can't skip persistence.
         odo_backstop = (self.pos_source != "WALL"
-                        and self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM))
+                        and self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM)
+                        and heading_ok)
 
         if wall_trigger or odo_backstop:
             # Was that the end of the LAST lane? Then the arena is swept -> done.
@@ -220,13 +232,14 @@ class NavigationController:
         else:
             self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - along,
                                               cfg.ARENA_LENGTH_CM))
-        self._wall_persist = 0
         self.mode = Mode.DRIVING
+        self.note_blocking_maneuver()
 
     def complete_dispose(self):
         """Call after main.py finishes the disposal maneuver: bucket emptied."""
         self.collector.reset()
         self.mode = Mode.DRIVING
+        self.note_blocking_maneuver()
 
     def rel_heading(self, yaw):
         """Convert a raw IMU yaw to a start-relative heading, or None if no IMU."""
@@ -308,6 +321,12 @@ class NavigationController:
         if yaw is not None and self._has_heading:
             self.heading_rel = angle_diff(yaw, self._yaw0)
 
+        # Never bridge more than a couple of control ticks -- a blocking dispose,
+        # U-turn, or front-scoop cycle can leave dt at many seconds.
+        max_dt = 2.0 / cfg.CONTROL_LOOP_HZ if cfg.CONTROL_LOOP_HZ > 0 else 0.1
+        if dt > max_dt:
+            dt = max_dt
+
         # Odometry accumulator: the bridge value + the "where's the wall" prior.
         if (self._last_action is Action.FORWARD and dt > 0.0
                 and cfg.DRIVE_SPEED > 0.0):
@@ -315,6 +334,9 @@ class NavigationController:
                                    * (self._last_speed / cfg.DRIVE_SPEED) * dt)
 
         forward = math.cos(math.radians(self.target_heading)) >= 0.0
+        heading_ok = (not self._has_heading
+                      or abs(angle_diff(self.target_heading, self.heading_rel))
+                      <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
 
         # Front wall: distance + how many sensors agree on it.
         front_dist, agree = self._front_wall(readings)
@@ -329,7 +351,7 @@ class NavigationController:
             # start of the lane (e.g. pit gap / open area behind the rover).
             near_start = self.lane_distance < cfg.ARENA_LENGTH_CM * 0.35
             far_phantom = front_dist > cfg.ARENA_LENGTH_CM * 0.75
-            if plausible and not (near_start and far_phantom):
+            if plausible and not (near_start and far_phantom) and heading_ok:
                 self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - front_dist,
                                                   cfg.ARENA_LENGTH_CM))
                 self.front_wall_cm = front_dist
