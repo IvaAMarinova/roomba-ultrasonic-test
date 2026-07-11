@@ -66,15 +66,19 @@ class Collector:
 
 
 class PulseWidthServo:
-    """gpiozero Servo driver with calibrated min/max pulse widths in milliseconds."""
+    """gpiozero Servo driver with two calibrated endpoint pulse widths in ms.
+
+    Endpoints may be in either order (e.g. back door closed can be higher pulse
+    than open). gpiozero always gets min/max of the two endpoint values.
+    """
 
     def __init__(
         self,
         cfg,
         *,
         pin,
-        min_pulse_ms,
-        max_pulse_ms,
+        endpoint_a_ms,
+        endpoint_b_ms,
         move_s,
         ramp_step_s,
         log_name,
@@ -91,15 +95,15 @@ class PulseWidthServo:
         self.dry_run = (not _HAS_SERVO) if dry_run is None else dry_run
         self._servo = None
         if initial_pulse_ms is None:
-            initial_pulse_ms = min_pulse_ms
+            initial_pulse_ms = endpoint_a_ms
         self.pulse_ms = initial_pulse_ms
 
         if calibration:
             self._min_pulse_ms = SERVO_HW_MIN_PULSE_S * 1000.0
             self._max_pulse_ms = SERVO_HW_MAX_PULSE_S * 1000.0
         else:
-            self._min_pulse_ms = min_pulse_ms
-            self._max_pulse_ms = max_pulse_ms
+            self._min_pulse_ms = min(endpoint_a_ms, endpoint_b_ms)
+            self._max_pulse_ms = max(endpoint_a_ms, endpoint_b_ms)
 
         if not self.dry_run:
             if calibration:
@@ -111,8 +115,8 @@ class PulseWidthServo:
                     self._max_pulse_ms,
                 )
             else:
-                min_pulse_s = min_pulse_ms / 1000.0
-                max_pulse_s = max_pulse_ms / 1000.0
+                min_pulse_s = self._min_pulse_ms / 1000.0
+                max_pulse_s = self._max_pulse_ms / 1000.0
                 initial = pulse_ms_to_value(
                     initial_pulse_ms,
                     self._min_pulse_ms,
@@ -185,8 +189,8 @@ class FrontServo:
         self._driver = PulseWidthServo(
             cfg,
             pin=cfg.FRONT_SERVO_PIN,
-            min_pulse_ms=cfg.FRONT_SERVO_DOWN_PULSE_MS,
-            max_pulse_ms=cfg.FRONT_SERVO_UP_PULSE_MS,
+            endpoint_a_ms=cfg.FRONT_SERVO_DOWN_PULSE_MS,
+            endpoint_b_ms=cfg.FRONT_SERVO_UP_PULSE_MS,
             move_s=cfg.FRONT_SERVO_MOVE_S,
             ramp_step_s=cfg.FRONT_SERVO_RAMP_STEP_S,
             log_name="front-servo",
@@ -245,8 +249,8 @@ class BackServo:
         self._driver = PulseWidthServo(
             cfg,
             pin=cfg.BACK_SERVO_PIN,
-            min_pulse_ms=cfg.BACK_SERVO_CLOSED_PULSE_MS,
-            max_pulse_ms=cfg.BACK_SERVO_OPEN_PULSE_MS,
+            endpoint_a_ms=cfg.BACK_SERVO_CLOSED_PULSE_MS,
+            endpoint_b_ms=cfg.BACK_SERVO_OPEN_PULSE_MS,
             move_s=cfg.BACK_SERVO_MOVE_S,
             ramp_step_s=cfg.BACK_SERVO_RAMP_STEP_S,
             log_name="back-servo",

@@ -98,12 +98,12 @@ FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 # ---------------------------------------------------------------------------
 # Back dump door servo.
 #   Opens the rear door so collected balls fall into the pit. Starts closed;
-#   Disposer.dump() opens, holds DISPOSE_HOLD_S, then closes. Calibrate with
-#   back_servo_calibrate.py. See actuators.BackServo / Disposer.
+#   CLOSED and OPEN pulse widths are independent values; either may be larger.
+#   Calibrate with back_servo_calibrate.py. See actuators.BackServo / Disposer.
 # ---------------------------------------------------------------------------
 BACK_SERVO_PIN = 19                 # BCM pin for the rear door servo PWM signal
-BACK_SERVO_CLOSED_PULSE_MS = 1.000  # door closed (balls retained) -- calibrate
-BACK_SERVO_OPEN_PULSE_MS = 1.500    # door open (dump) -- calibrate
+BACK_SERVO_CLOSED_PULSE_MS = 2.450  # door closed (balls retained)
+BACK_SERVO_OPEN_PULSE_MS = 1.900    # door open (dump)
 BACK_SERVO_MOVE_S = 3.0             # seconds for full closed<->open travel
 BACK_SERVO_RAMP_STEP_S = 0.02       # update interval while ramping
 
