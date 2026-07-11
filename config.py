@@ -106,7 +106,7 @@ FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 BACK_SERVO_PIN = 19                 # BCM pin for the rear door servo PWM signal
 BACK_SERVO_CLOSED_PULSE_MS = 2.45   # door closed (balls retained) -- calibrate
 BACK_SERVO_OPEN_PULSE_MS = 1.90     # door open (dump) -- calibrate
-BACK_SERVO_MOVE_S = 3.0             # seconds for full closed<->open travel
+BACK_SERVO_MOVE_S = 0.80            # seconds for full closed<->open travel
 BACK_SERVO_RAMP_STEP_S = 0.02       # update interval while ramping
 
 # ---------------------------------------------------------------------------
