@@ -439,9 +439,9 @@ The U-turn and disposal maneuvers add their own `[u-turn] ...`, `[orient] ...`,
 | `DISPOSE_REVERSE_CM` | Tune at the pit so the rear **overhangs but the drive wheels stay on the edge** (no rear sensor — this one can drop a wheel in). |
 | `SERPENTINE_FIRST_TURN` | Bench-check a right turn steps the car `+x` (into the arena); flip it if your IMU yaw runs the other way. |
 | `PIT_ARRIVAL_RADIUS_CM` | Keep **≥ `FRONT_STOP_DISTANCE_CM`**, or the car never reaches the pit. |
-| `FRONT_SERVO_INTERVAL_S` | How often (seconds of driving) the front scoop lifts to `FRONT_SERVO_UP_DEG`. |
+| `FRONT_SERVO_INTERVAL_S` | How often (seconds of driving) the front scoop lifts to `FRONT_SERVO_UP_PULSE_MS`. |
 
-_Not yet implemented: the servos — `Collector`/`Disposer`/`FrontServo` are log-only, so disposal fires on pit arrival rather than "bucket full", and the scoop lift just logs its angle._
+_Front scoop uses calibrated pulse widths (`FRONT_SERVO_DOWN_PULSE_MS` / `FRONT_SERVO_UP_PULSE_MS`). Collection/disposal servos are still placeholders._
 
 ```
 

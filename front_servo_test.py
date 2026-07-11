@@ -2,7 +2,7 @@
 Continuous front scoop lift test.
 
 Runs the same startup sequence and lift cycle as main.py: raise to
-FRONT_SERVO_UP_DEG, hold FRONT_SERVO_HOLD_S, lower to FRONT_SERVO_DOWN_DEG,
+FRONT_SERVO_UP_PULSE_MS, hold FRONT_SERVO_HOLD_S, lower to FRONT_SERVO_DOWN_PULSE_MS,
 then pause FRONT_SERVO_HOLD_S before the next cycle.
 
 Run on the Pi:  python3 front_servo_test.py
@@ -21,8 +21,8 @@ def main():
     front_servo = FrontServo(cfg)
 
     print("Front scoop lift test (same sequence as main.py)")
-    print(f"  up angle   : {cfg.FRONT_SERVO_UP_DEG:.0f} deg")
-    print(f"  down angle : {cfg.FRONT_SERVO_DOWN_DEG:.0f} deg")
+    print(f"  up pulse   : {cfg.FRONT_SERVO_UP_PULSE_MS:.3f} ms")
+    print(f"  down pulse : {cfg.FRONT_SERVO_DOWN_PULSE_MS:.3f} ms")
     print(f"  hold at top: {cfg.FRONT_SERVO_HOLD_S:.1f} s")
     print(f"  pause at down: {cfg.FRONT_SERVO_HOLD_S:.1f} s")
     print("Ctrl-C to stop\n")

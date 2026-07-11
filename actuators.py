@@ -20,9 +20,19 @@ except (ImportError, RuntimeError):
     Servo = None
     _HAS_SERVO = False
 
-# Match the working roomba servo_test.py pulse widths (0.5 ms .. 2.5 ms).
-_SERVO_MIN_PULSE_S = 0.0005
-_SERVO_MAX_PULSE_S = 0.0025
+# Wide pulse range for bench calibration (front_servo_calibrate.py).
+SERVO_HW_MIN_PULSE_S = 0.0005
+SERVO_HW_MAX_PULSE_S = 0.0025
+
+
+def pulse_ms_to_value(pulse_ms, min_pulse_ms, max_pulse_ms):
+    """Map a pulse width in ms to gpiozero Servo value [-1.0, 1.0]."""
+    span = max_pulse_ms - min_pulse_ms
+    if span == 0:
+        return 0.0
+    t = (pulse_ms - min_pulse_ms) / span
+    t = max(0.0, min(1.0, t))
+    return -1.0 + 2.0 * t
 
 
 class Collector:
@@ -57,52 +67,66 @@ class Collector:
 class FrontServo:
     """The front collection scoop ("багер") servo on FRONT_SERVO_PIN.
 
-    Uses gpiozero Servo with the same 0.5–2.5 ms pulse range as servo_test.py.
-    Configured angles map linearly to servo values: DOWN -> -1.0 (MIN pulse),
-    UP -> +1.0 (MAX pulse). Each move_to() sets the target once (no sweep).
+    Down and up positions are configured as pulse widths in milliseconds.
+    gpiozero min/max pulse widths are set to those endpoints so value -1.0 is
+    down and +1.0 is up. Each move sets the target once (no sweep).
     """
 
-    def __init__(self, cfg=default_config, dry_run=None):
+    def __init__(self, cfg=default_config, dry_run=None, calibration=False):
         self.cfg = cfg
-        self.angle = cfg.FRONT_SERVO_UP_DEG
+        self.pulse_ms = cfg.FRONT_SERVO_UP_PULSE_MS
+        self.calibration = calibration
         self.dry_run = (not _HAS_SERVO) if dry_run is None else dry_run
         self._servo = None
         if not self.dry_run:
+            if calibration:
+                min_pulse_s = SERVO_HW_MIN_PULSE_S
+                max_pulse_s = SERVO_HW_MAX_PULSE_S
+                initial = pulse_ms_to_value(
+                    cfg.FRONT_SERVO_DOWN_PULSE_MS,
+                    min_pulse_s * 1000.0,
+                    max_pulse_s * 1000.0,
+                )
+            else:
+                min_pulse_s = cfg.FRONT_SERVO_DOWN_PULSE_MS / 1000.0
+                max_pulse_s = cfg.FRONT_SERVO_UP_PULSE_MS / 1000.0
+                initial = 1.0
             self._servo = Servo(
                 cfg.FRONT_SERVO_PIN,
-                min_pulse_width=_SERVO_MIN_PULSE_S,
-                max_pulse_width=_SERVO_MAX_PULSE_S,
-                initial_value=self._deg_to_value(cfg.FRONT_SERVO_UP_DEG),
+                min_pulse_width=min_pulse_s,
+                max_pulse_width=max_pulse_s,
+                initial_value=initial,
             )
+        self._min_pulse_ms = (
+            SERVO_HW_MIN_PULSE_S * 1000.0 if calibration
+            else cfg.FRONT_SERVO_DOWN_PULSE_MS
+        )
+        self._max_pulse_ms = (
+            SERVO_HW_MAX_PULSE_S * 1000.0 if calibration
+            else cfg.FRONT_SERVO_UP_PULSE_MS
+        )
 
-    def _deg_to_value(self, deg):
-        """Map configured scoop angle to gpiozero Servo value in [-1.0, 1.0]."""
-        down = self.cfg.FRONT_SERVO_DOWN_DEG
-        up = self.cfg.FRONT_SERVO_UP_DEG
-        span = up - down
-        if span == 0:
-            return 0.0
-        t = (deg - down) / span
-        t = max(0.0, min(1.0, t))
-        return -1.0 + 2.0 * t
-
-    def move_to(self, deg):
-        """Command the servo to `deg` with a single PWM target (no sweep)."""
-        self.angle = deg
-        value = self._deg_to_value(deg)
+    def move_to_pulse_ms(self, pulse_ms, *, log=True):
+        """Command the servo to `pulse_ms` with a single PWM target (no sweep)."""
+        pulse_ms = max(self._min_pulse_ms, min(self._max_pulse_ms, pulse_ms))
+        self.pulse_ms = pulse_ms
+        value = pulse_ms_to_value(pulse_ms, self._min_pulse_ms, self._max_pulse_ms)
         if self.dry_run:
-            print(f"[front-servo] -> {deg:.0f}deg (dry run, value={value:+.2f})")
-            return
+            if log:
+                print(f"[front-servo] -> {pulse_ms:.3f} ms (dry run, value={value:+.3f})")
+            return value
         self._servo.value = value
-        print(f"[front-servo] -> {deg:.0f}deg")
+        if log:
+            print(f"[front-servo] -> {pulse_ms:.3f} ms")
+        return value
 
     def raise_up(self):
-        """Lift the scoop to the raised angle (FRONT_SERVO_UP_DEG)."""
-        self.move_to(self.cfg.FRONT_SERVO_UP_DEG)
+        """Lift the scoop to the raised pulse width (FRONT_SERVO_UP_PULSE_MS)."""
+        self.move_to_pulse_ms(self.cfg.FRONT_SERVO_UP_PULSE_MS)
 
     def lower(self):
-        """Return the scoop to its resting angle (FRONT_SERVO_DOWN_DEG)."""
-        self.move_to(self.cfg.FRONT_SERVO_DOWN_DEG)
+        """Return the scoop to the resting pulse width (FRONT_SERVO_DOWN_PULSE_MS)."""
+        self.move_to_pulse_ms(self.cfg.FRONT_SERVO_DOWN_PULSE_MS)
 
     def lift_cycle(self):
         """Raise, hold at the top, then lower -- same sequence as main.py while driving."""
@@ -114,7 +138,7 @@ class FrontServo:
         """Hold the scoop raised at launch, then lower to the collecting position.
 
         The scoop is already commanded up on init. Waits FRONT_SERVO_START_UP_S
-        (0 = lower immediately) before moving to the down/collecting angle.
+        (0 = lower immediately) before moving to the down/collecting position.
         """
         self.raise_up()
         hold_s = self.cfg.FRONT_SERVO_START_UP_S

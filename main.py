@@ -336,8 +336,8 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
           f"arrive within {cfg.PIT_ARRIVAL_RADIUS_CM:.0f} cm")
     print(f"  collection cap: {cfg.COLLECTION_CAPACITY_BLOCKS} blocks")
     print(f"  front scoop   : start up {cfg.FRONT_SERVO_START_UP_S:.1f}s, then lift to "
-          f"{cfg.FRONT_SERVO_UP_DEG:.0f}deg every {cfg.FRONT_SERVO_INTERVAL_S:.0f}s driving, "
-          f"hold {cfg.FRONT_SERVO_HOLD_S:.1f}s")
+          f"{cfg.FRONT_SERVO_UP_PULSE_MS:.3f} ms every {cfg.FRONT_SERVO_INTERVAL_S:.0f}s driving, "
+          f"hold {cfg.FRONT_SERVO_HOLD_S:.1f}s (down {cfg.FRONT_SERVO_DOWN_PULSE_MS:.3f} ms)")
     print(f"  driving       : {drive_mode}   turns: {turn_mode}")
     print(f"  end of lane   : wall standoff {cfg.FRONT_STOP_DISTANCE_CM:.0f} cm, "
           f">={cfg.FRONT_AGREE_MIN_COUNT}/3 agree, hold {cfg.WALL_PERSIST_TICKS} ticks "

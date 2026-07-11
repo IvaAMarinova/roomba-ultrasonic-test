@@ -1,8 +1,8 @@
 """
 Interactive front scoop servo calibration.
 
-Adjust the scoop angle with +/- (or arrow keys) and read the matching gpiozero
-servo value and pulse width. Uses the same PWM mapping as actuators.FrontServo.
+Adjust the pulse width with +/- (or arrow keys) and read the current value in ms.
+Uses the hardware pulse range for exploration; d/u jump to configured down/up.
 
 Run on the Pi:  python3 front_servo_calibrate.py
                 GPIOZERO_PIN_FACTORY=pigpio python3 front_servo_calibrate.py
@@ -12,27 +12,13 @@ Quit with:     q
 import curses
 
 import config
-from actuators import FrontServo, _SERVO_MAX_PULSE_S, _SERVO_MIN_PULSE_S
+from actuators import FrontServo, pulse_ms_to_value
 
-FINE_STEP_DEG = 1.0
-COARSE_STEP_DEG = 5.0
-
-
-def _pulse_ms(value):
-    """Convert gpiozero Servo value [-1, 1] to pulse width in milliseconds."""
-    t = (value + 1.0) / 2.0
-    return (_SERVO_MIN_PULSE_S + t * (_SERVO_MAX_PULSE_S - _SERVO_MIN_PULSE_S)) * 1000.0
+FINE_STEP_MS = 0.010
+COARSE_STEP_MS = 0.050
 
 
-def _apply(servo, angle_deg):
-    value = servo._deg_to_value(angle_deg)
-    servo.angle = angle_deg
-    if not servo.dry_run and servo._servo is not None:
-        servo._servo.value = value
-    return value
-
-
-def _draw(stdscr, servo, angle_deg, value, status):
+def _draw(stdscr, servo, pulse_ms, value, status):
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     if height < 16 or width < 48:
@@ -41,33 +27,24 @@ def _draw(stdscr, servo, angle_deg, value, status):
         return
 
     cfg = servo.cfg
-    pulse = _pulse_ms(value)
-    clamped = angle_deg < cfg.FRONT_SERVO_DOWN_DEG or angle_deg > cfg.FRONT_SERVO_UP_DEG
     mode = "dry run" if servo.dry_run else f"GPIO {cfg.FRONT_SERVO_PIN}"
 
     lines = [
         "Front scoop servo calibration",
         "",
-        f"  angle        {angle_deg:7.1f} deg",
+        f"  pulse width  {pulse_ms:7.3f} ms",
         f"  servo value  {value:+7.3f}",
-        f"  pulse width  {pulse:7.3f} ms",
         f"  backend      {mode}",
         "",
         "  config.py reference:",
-        f"    FRONT_SERVO_DOWN_DEG = {cfg.FRONT_SERVO_DOWN_DEG:.1f}",
-        f"    FRONT_SERVO_UP_DEG   = {cfg.FRONT_SERVO_UP_DEG:.1f}",
+        f"    FRONT_SERVO_DOWN_PULSE_MS = {cfg.FRONT_SERVO_DOWN_PULSE_MS:.3f}",
+        f"    FRONT_SERVO_UP_PULSE_MS   = {cfg.FRONT_SERVO_UP_PULSE_MS:.3f}",
         "",
-    ]
-    if clamped:
-        lines.append("  (servo value clamped outside configured down/up range)")
-        lines.append("")
-
-    lines.extend([
-        "  +/- or Left/Right     step 1 deg",
-        "  Up/Down               step 5 deg",
+        "  +/- or Left/Right     step 0.010 ms",
+        "  Up/Down               step 0.050 ms",
         "  d / u                 jump to configured down / up",
         "  q                     quit",
-    ])
+    ]
     if status:
         lines.extend(["", f"  {status}"])
 
@@ -84,14 +61,14 @@ def _run(stdscr):
     stdscr.nodelay(False)
     stdscr.keypad(True)
 
-    servo = FrontServo(config)
-    angle_deg = config.FRONT_SERVO_DOWN_DEG
-    value = _apply(servo, angle_deg)
+    servo = FrontServo(config, calibration=True)
+    pulse_ms = config.FRONT_SERVO_DOWN_PULSE_MS
+    value = servo.move_to_pulse_ms(pulse_ms, log=False)
     status = ""
 
     try:
         while True:
-            _draw(stdscr, servo, angle_deg, value, status)
+            _draw(stdscr, servo, pulse_ms, value, status)
             key = stdscr.getch()
 
             if key in (ord("q"), ord("Q")):
@@ -99,36 +76,38 @@ def _run(stdscr):
 
             changed = False
             if key in (ord("+"), ord("=")):
-                angle_deg += FINE_STEP_DEG
+                pulse_ms += FINE_STEP_MS
                 changed = True
             elif key == ord("-"):
-                angle_deg -= FINE_STEP_DEG
+                pulse_ms -= FINE_STEP_MS
                 changed = True
             elif key == curses.KEY_RIGHT:
-                angle_deg += FINE_STEP_DEG
+                pulse_ms += FINE_STEP_MS
                 changed = True
             elif key == curses.KEY_LEFT:
-                angle_deg -= FINE_STEP_DEG
+                pulse_ms -= FINE_STEP_MS
                 changed = True
             elif key == curses.KEY_UP:
-                angle_deg += COARSE_STEP_DEG
+                pulse_ms += COARSE_STEP_MS
                 changed = True
             elif key == curses.KEY_DOWN:
-                angle_deg -= COARSE_STEP_DEG
+                pulse_ms -= COARSE_STEP_MS
                 changed = True
             elif key in (ord("d"), ord("D")):
-                angle_deg = config.FRONT_SERVO_DOWN_DEG
-                status = "jumped to configured down angle"
+                pulse_ms = config.FRONT_SERVO_DOWN_PULSE_MS
+                status = "jumped to configured down pulse"
                 changed = True
             elif key in (ord("u"), ord("U")):
-                angle_deg = config.FRONT_SERVO_UP_DEG
-                status = "jumped to configured up angle"
+                pulse_ms = config.FRONT_SERVO_UP_PULSE_MS
+                status = "jumped to configured up pulse"
                 changed = True
             else:
                 status = ""
 
             if changed:
-                value = _apply(servo, angle_deg)
+                pulse_ms = max(servo._min_pulse_ms, min(servo._max_pulse_ms, pulse_ms))
+                value = pulse_ms_to_value(pulse_ms, servo._min_pulse_ms, servo._max_pulse_ms)
+                servo.move_to_pulse_ms(pulse_ms, log=False)
                 if not status:
                     status = "updated"
     finally:
