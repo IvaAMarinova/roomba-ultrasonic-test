@@ -111,9 +111,9 @@ def _heading_aligned(imu, nav, target_rel, tol):
 def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
     """Rotate in place until the car's heading ~= target_rel (start-relative deg).
 
-    Spins continuously in one direction (no per-tick direction flip) so the car
-    does not hunt in place near ±90° / ±180°. A single slow correction pass runs
-    only if the first spin overshoots.
+    Accumulates signed heading change (like U-turn spins) so a 3° correction
+    stops after ~3°, not after the full IMU timeout. Spins one way without
+    per-tick direction flips.
     """
     cur = nav.rel_heading(imu.yaw()) if imu is not None else None
     if cur is None:
@@ -127,38 +127,56 @@ def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
 
     direction = "right" if err0 > 0 else "left"
     turn_fn = motors.turn_right if direction == "right" else motors.turn_left
+    goal = max(0.0, abs(err0) - cfg.IMU_TURN_TOLERANCE_DEG)
     timeout = cfg.IMU_TURN_TIMEOUT_S * max(1.0, abs(err0) / cfg.TURN_ANGLE_DEG)
     deadline = time.time() + timeout
+
     turn_fn(logger, cfg.TURN_SPEED)
+    prev_rel = cur
+    turned = 0.0
     while time.time() < deadline:
         time.sleep(cfg.IMU_TURN_POLL_S)
-        cur = nav.rel_heading(imu.yaw())
-        if cur is None:
+        cur_rel = nav.rel_heading(imu.yaw())
+        if cur_rel is None:
             continue
-        if abs(angle_diff(target_rel, cur)) <= cfg.IMU_TURN_TOLERANCE_DEG:
+        step = angle_diff(cur_rel, prev_rel)
+        if abs(step) > cfg.IMU_GLITCH_MAX_STEP_DEG:
+            continue
+        prev_rel = cur_rel
+        turned += step
+        if abs(turned) >= goal:
             break
     motors.stop(logger)
-
-    cur = nav.rel_heading(imu.yaw())
-    if cur is not None:
-        err = angle_diff(target_rel, cur)
-        if (abs(err) > cfg.IMU_TURN_TOLERANCE_DEG
-                and (err0 > 0) != (err > 0)):
-            fine = motors.turn_left if err < 0 else motors.turn_right
-            fine(logger, cfg.TURN_SPEED * 0.5)
-            fine_deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S * 0.5
-            while time.time() < fine_deadline:
-                time.sleep(cfg.IMU_TURN_POLL_S)
-                cur = nav.rel_heading(imu.yaw())
-                if cur is not None and abs(angle_diff(target_rel, cur)) <= cfg.IMU_TURN_TOLERANCE_DEG:
-                    break
-            motors.stop(logger)
 
     aligned = _heading_aligned(imu, nav, target_rel, cfg.IMU_TURN_TOLERANCE_DEG)
     if not aligned:
         cur = nav.rel_heading(imu.yaw())
-        logger.log("orient", step="incomplete", target=target_rel,
-                   current=cur, error=angle_diff(target_rel, cur) if cur is not None else None)
+        err = angle_diff(target_rel, cur) if cur is not None else None
+        if cur is not None and err is not None and abs(err) > cfg.IMU_TURN_TOLERANCE_DEG:
+            fine = motors.turn_left if err < 0 else motors.turn_right
+            fine(logger, cfg.TURN_SPEED * 0.5)
+            fine_deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S * 0.25
+            prev_rel = cur
+            turned = 0.0
+            fine_goal = max(0.0, abs(err) - cfg.IMU_TURN_TOLERANCE_DEG)
+            while time.time() < fine_deadline:
+                time.sleep(cfg.IMU_TURN_POLL_S)
+                cur_rel = nav.rel_heading(imu.yaw())
+                if cur_rel is None:
+                    continue
+                step = angle_diff(cur_rel, prev_rel)
+                if abs(step) > cfg.IMU_GLITCH_MAX_STEP_DEG:
+                    continue
+                prev_rel = cur_rel
+                turned += step
+                if abs(turned) >= fine_goal:
+                    break
+            motors.stop(logger)
+        aligned = _heading_aligned(imu, nav, target_rel, cfg.IMU_TURN_TOLERANCE_DEG)
+        if not aligned:
+            cur = nav.rel_heading(imu.yaw())
+            logger.log("orient", step="incomplete", target=target_rel,
+                       current=cur, error=angle_diff(target_rel, cur) if cur is not None else None)
     return aligned
 
 

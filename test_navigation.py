@@ -262,11 +262,28 @@ def test_dispose_face_heading_on_start_wall_pit():
     assert n.dispose_face_heading() == 0.0
 
 
-def test_end_wall_uses_min_when_sensors_disagree():
+def test_end_wall_uses_min_when_sensors_agree_within_tol():
     n = nav()
-    dist, agree = n.end_wall_ahead(reading(front_left=50, front_right=120))
-    assert dist == 50
+    dist, agree = n.end_wall_ahead(reading(front_left=50, front_right=55))
     assert agree == 2
+    assert 50 <= dist <= 55
+
+
+def test_lane_end_ignores_disagreeing_sensors():
+    n = nav()
+    dist, agree = n.end_wall_ahead(reading(front_left=30, front_right=150))
+    assert dist == INF
+    assert agree == 2
+
+
+def test_lane_end_rejects_close_reading_far_from_expected():
+    """Side obstacle at 30 cm must not end the lane when odometry says y~30 of 212."""
+    n = nav()
+    n.lane_distance = 30.0
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=29, front_right=28), yaw=0.0, dt=0.2)
+    assert cmd.action is Action.FORWARD
 
 
 def test_phantom_far_wall_not_anchored_near_start():

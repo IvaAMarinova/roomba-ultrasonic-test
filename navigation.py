@@ -155,12 +155,15 @@ class NavigationController:
                 Action.DISPOSE, speed=0.0,
                 reason=f"reached pit ({self.collector}) -> dispose"))
 
-        # 2) End of lane? Primary = nearest front reading within standoff (uses min
-        #    of sensors when they disagree -- important with 2 sensors / asymmetric
-        #    walls). Backstop = odometry if nothing finite is seen ahead.
-        end_dist, end_agree = self._end_wall_ahead(readings)
+        # 2) End of lane? Primary = front sensors agree on a close wall AND odometry
+        #    expects the end wall nearby (rejects a side obstacle when left/right
+        #    disagree). Backstop = odometry if no qualifying wall is seen.
+        end_dist, end_agree = self._lane_end_wall(readings)
+        expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
+        wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
         wall_stop = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
-                     and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
+                     and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+                     and wall_plausible)
         self._wall_persist = self._wall_persist + 1 if wall_stop else 0
         wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
         # Odometry backstop only applies when we have NO believed wall (total
@@ -239,8 +242,8 @@ class NavigationController:
         return self._front_wall(readings)
 
     def end_wall_ahead(self, readings):
-        """Conservative end-wall distance for lane-end / drive-to-wall stops."""
-        return self._end_wall_ahead(readings)
+        """Distance to a believable end wall (for drive-to-wall during return)."""
+        return self._lane_end_wall(readings)
 
     def set_pose(self, x=None, y=None, lane_distance=None, target_heading=None):
         """Overwrite pose after a blocking sensor-referenced maneuver (return legs)."""
@@ -340,11 +343,11 @@ class NavigationController:
             self.front_wall_cm = INF
             self.pos_source = "BRIDGE"
 
-        # While bridging, still surface the nearest front reading for slow/stop logic.
-        end_dist, end_agree = self._end_wall_ahead(readings)
-        if self.pos_source == "BRIDGE" and end_agree >= cfg.FRONT_AGREE_MIN_COUNT:
-            self.front_wall_cm = end_dist
-            self.front_agree = end_agree
+        # While bridging, show a close agreed wall for slowing (never min-of-disagree).
+        near_dist, near_agree = self._lane_end_wall(readings)
+        if self.pos_source == "BRIDGE" and near_agree >= cfg.FRONT_AGREE_MIN_COUNT:
+            self.front_wall_cm = near_dist
+            self.front_agree = near_agree
 
         self.lane_distance = max(0.0, min(self.lane_distance, cfg.ARENA_LENGTH_CM))
 
@@ -388,19 +391,21 @@ class NavigationController:
             return statistics.median(cluster), len(cluster)
         return INF, len(cluster)
 
-    def _end_wall_ahead(self, readings):
-        """Nearest believable obstacle ahead -- for lane-end and drive-to-wall.
+    def _lane_end_wall(self, readings):
+        """End-wall distance when sensors actually agree (cluster or tight spread).
 
-        Prefers a agreeing cluster (_front_wall). If sensors disagree (common with
-        only two front sensors or an asymmetric end wall), falls back to the minimum
-        finite reading so we still stop at the closest surface.
+        Does NOT take min(front_left, front_right) when they disagree -- that was
+        stopping at ~30 cm because the left sensor saw the side wall while the
+        right still saw down the lane.
         """
         dist, agree = self._front_wall(readings)
         if agree >= self.cfg.FRONT_AGREE_MIN_COUNT:
             return dist, agree
         finite = self._enabled_front_distances(readings)
         if len(finite) >= self.cfg.FRONT_AGREE_MIN_COUNT:
-            return min(finite), len(finite)
+            spread = max(finite) - min(finite)
+            if spread <= self.cfg.FRONT_AGREE_TOL_CM:
+                return min(finite), len(finite)
         return INF, len(finite)
 
     def _at_pit(self):
