@@ -3,8 +3,10 @@ import math
 # ---------------------------------------------------------------------------
 # Arena geometry (known and fixed for the competition).
 # ---------------------------------------------------------------------------
-ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
-ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
+# ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
+# ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
+ARENA_WIDTH_CM = 150.0        # across the lanes (the car steps sideways here)
+ARENA_LENGTH_CM = 160.0       # along each lane (the long axis the car runs)
 
 ROBOT_WIDTH_CM = 50.0         # physical width of the car
 
