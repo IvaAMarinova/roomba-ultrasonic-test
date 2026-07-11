@@ -111,6 +111,9 @@ def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
         logger.log("orient", step="skip", reason="no IMU heading")
         return False
     err0 = angle_diff(target_rel, cur)
+    if abs(err0) <= cfg.IMU_TURN_TOLERANCE_DEG:
+        logger.log("orient", step="skip", target=target_rel, current=cur, error=err0)
+        return True
     logger.log("orient", step="turn", target=target_rel, current=cur, error=err0)
     deadline = time.time() + cfg.IMU_TURN_TIMEOUT_S
     while time.time() < deadline:
@@ -180,9 +183,8 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     empties the (stub) bucket and returns to DRIVING.
     """
     if cfg.DISPOSE_BACK_INTO_PIT:
-        # Face AWAY from the pit so the back (the tip side) points into it.
         target = (face_heading if face_heading is not None
-                  else angle_diff(nav.bearing_to_pit() + 180.0, 0.0))
+                  else nav.dispose_face_heading())
         _spin_to_heading(logger, motors, cfg, imu, nav, target)
 
     rev_s = _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
@@ -194,8 +196,12 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
     logger.log("dispose", step="clear", cm=cfg.DISPOSE_REVERSE_CM)
 
-    # Point back down the lane before handing control back to the sweep.
-    _spin_to_heading(logger, motors, cfg, imu, nav, nav.target_heading)
+    # Resume the lane heading only if disposal left us misaligned (skip when
+    # already on target -- avoids hunting near ±90°/±180° after a start-wall dump).
+    cur = nav.rel_heading(imu.yaw() if imu is not None else None)
+    if (cur is not None
+            and abs(angle_diff(nav.target_heading, cur)) > cfg.IMU_TURN_TOLERANCE_DEG):
+        _spin_to_heading(logger, motors, cfg, imu, nav, nav.target_heading)
     nav.complete_dispose()
     logger.log("dispose", step="done")
 

@@ -243,6 +243,26 @@ def test_dispose_does_not_retrigger_until_leaving_pit():
     assert n.decide(reading(), yaw=0.0, dt=0.0).action is not Action.DISPOSE
 
 
+def test_complete_turn_preserves_y_at_start_wall():
+    """U-turn onto a +y lane must not snap y to 0 (false pit arrival)."""
+    n = nav()
+    n._lane_index = 1
+    n.x = 35.0
+    n.y = 16.8
+    n.target_heading = -180.0
+    n.lane_distance = 143.2
+    n.complete_turn()
+    assert abs(n.lane_distance - 16.8) < 0.1
+    n.decide(reading(), yaw=0.0, dt=0.0)
+    assert abs(n.y - 16.8) < 0.1
+
+
+def test_dispose_face_heading_on_start_wall_pit():
+    n = nav(cfg_with(PIT_X_CM=75.0, PIT_Y_CM=0.0))
+    n.x, n.y = 70.0, 0.0   # dy=0 would break bearing_to_pit + 180
+    assert n.dispose_face_heading() == 0.0
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0

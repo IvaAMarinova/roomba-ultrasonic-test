@@ -201,10 +201,20 @@ class NavigationController:
         the per-lane fusion state. Cross-lane x comes from the lane index, so the
         sideways step is exact regardless of how the physical shift went.
         """
+        cfg = self.cfg
         self._lane_index += 1
-        self.x += self._sweep_sign * self.cfg.LANE_WIDTH_CM   # step one lane sideways
+        self.x += self._sweep_sign * cfg.LANE_WIDTH_CM   # step one lane sideways
         self.target_heading = angle_diff(self.target_heading + 180.0, 0.0)
-        self.lane_distance = 0.0
+        # Keep along-lane position across the U-turn: resetting to 0 would snap y
+        # to the start wall whenever the next lane drives +y (the usual case after
+        # turning at y=0), falsely placing the car at the pit.
+        along = self.y - cfg.START_Y_CM
+        forward = math.cos(math.radians(self.target_heading)) >= 0.0
+        if forward:
+            self.lane_distance = max(0.0, min(along, cfg.ARENA_LENGTH_CM))
+        else:
+            self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - along,
+                                              cfg.ARENA_LENGTH_CM))
         self._wall_persist = 0
         self.mode = Mode.DRIVING
 
@@ -231,6 +241,21 @@ class NavigationController:
         dx = self.cfg.PIT_X_CM - self.x
         dy = self.cfg.PIT_Y_CM - self.y
         return math.degrees(math.atan2(dx, dy))  # matches forward=(sin,cos)
+
+    def dispose_face_heading(self):
+        """Heading to face so the car's BACK points at the pit before reversing in.
+
+        On a start-wall or far-wall pit, face along the lane (+y or -y). The
+        generic bearing+180° rule fails when dy≈0 (car on the pit's wall) and
+        would command a sideways heading.
+        """
+        cfg = self.cfg
+        if abs(cfg.PIT_Y_CM - cfg.START_Y_CM) < 1.0:
+            return 0.0
+        far_y = cfg.START_Y_CM + cfg.ARENA_LENGTH_CM
+        if abs(cfg.PIT_Y_CM - far_y) < 1.0:
+            return 180.0
+        return angle_diff(self.bearing_to_pit() + 180.0, 0.0)
 
     def pose_str(self):
         wall = "--" if self.front_wall_cm == INF else f"{self.front_wall_cm:5.1f}"
