@@ -189,7 +189,6 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     logger.log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
 
     logger.log("dispose", step="dump", hold_s=cfg.DISPOSE_HOLD_S)
-    time.sleep(cfg.DISPOSE_HOLD_S)
     disposer.dump()
 
     _drive_distance(motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
@@ -375,6 +374,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
                 break
             time.sleep(period)
     finally:
+        disposer.cleanup()
         sensors.cleanup()
 
 

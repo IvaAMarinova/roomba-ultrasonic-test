@@ -66,10 +66,10 @@ DISPOSE_BACK_INTO_PIT = True        # True = orient the back toward the pit befo
 # same distance forward again after dumping to get clear before resuming.
 DISPOSE_REVERSE_CM = 20.0
 DISPOSE_REVERSE_SPEED = 0.3         # slow, for precise placement (0..1)
-DISPOSE_HOLD_S = 2.0                # placeholder dwell while "dumping" (until servo lands)
+DISPOSE_HOLD_S = 2.0                # dwell with rear door open while balls fall out
 
 # ---------------------------------------------------------------------------
-# Collection (future servo).
+# Collection (future sensor).
 #   The collection servo will report how many blocks are in the bucket; when it
 #   reaches COLLECTION_CAPACITY_BLOCKS the bucket is "full". For now the count is
 #   a stub (see actuators.Collector) and disposal triggers purely on reaching the
@@ -94,6 +94,18 @@ FRONT_SERVO_RAMP_STEP_S = 0.02      # update interval while ramping
 FRONT_SERVO_START_UP_S = 0.0        # seconds to hold scoop up at launch before lowering
 FRONT_SERVO_INTERVAL_S = 20.0       # raise the front scoop this often (seconds of driving)
 FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
+
+# ---------------------------------------------------------------------------
+# Back dump door servo.
+#   Opens the rear door so collected balls fall into the pit. Starts closed;
+#   Disposer.dump() opens, holds DISPOSE_HOLD_S, then closes. Calibrate with
+#   back_servo_calibrate.py. See actuators.BackServo / Disposer.
+# ---------------------------------------------------------------------------
+BACK_SERVO_PIN = 19                 # BCM pin for the rear door servo PWM signal
+BACK_SERVO_CLOSED_PULSE_MS = 1.000  # door closed (balls retained) -- calibrate
+BACK_SERVO_OPEN_PULSE_MS = 1.500    # door open (dump) -- calibrate
+BACK_SERVO_MOVE_S = 3.0             # seconds for full closed<->open travel
+BACK_SERVO_RAMP_STEP_S = 0.02       # update interval while ramping
 
 # ---------------------------------------------------------------------------
 # Ultrasonic sensor layout.
