@@ -24,6 +24,7 @@ def main():
     print(f"  up pulse   : {cfg.FRONT_SERVO_UP_PULSE_MS:.3f} ms")
     print(f"  down pulse : {cfg.FRONT_SERVO_DOWN_PULSE_MS:.3f} ms")
     print(f"  hold at top: {cfg.FRONT_SERVO_HOLD_S:.1f} s")
+    print(f"  move speed : {cfg.FRONT_SERVO_MOVE_S:.1f} s full down<->up")
     print(f"  pause at down: {cfg.FRONT_SERVO_HOLD_S:.1f} s")
     print("Ctrl-C to stop\n")
 

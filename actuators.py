@@ -69,7 +69,8 @@ class FrontServo:
 
     Down and up positions are configured as pulse widths in milliseconds.
     gpiozero min/max pulse widths are set to those endpoints so value -1.0 is
-    down and +1.0 is up. Each move sets the target once (no sweep).
+    down and +1.0 is up. Production moves ramp between pulses at FRONT_SERVO_MOVE_S
+    for the full down<->up span; calibration mode jumps instantly.
     """
 
     def __init__(self, cfg=default_config, dry_run=None, calibration=False):
@@ -106,18 +107,53 @@ class FrontServo:
             else cfg.FRONT_SERVO_UP_PULSE_MS
         )
 
-    def move_to_pulse_ms(self, pulse_ms, *, log=True):
-        """Command the servo to `pulse_ms` with a single PWM target (no sweep)."""
-        pulse_ms = max(self._min_pulse_ms, min(self._max_pulse_ms, pulse_ms))
+    def _write_pulse_ms(self, pulse_ms):
+        """Set pulse width immediately and return the gpiozero value."""
         self.pulse_ms = pulse_ms
-        value = pulse_ms_to_value(pulse_ms, self._min_pulse_ms, self._max_pulse_ms)
-        if self.dry_run:
+        return pulse_ms_to_value(pulse_ms, self._min_pulse_ms, self._max_pulse_ms)
+
+    def move_to_pulse_ms(self, pulse_ms, *, log=True, ramp=None):
+        """Command the servo to `pulse_ms`, ramping unless in calibration mode."""
+        pulse_ms = max(self._min_pulse_ms, min(self._max_pulse_ms, pulse_ms))
+        if ramp is None:
+            ramp = (
+                not self.calibration
+                and self.cfg.FRONT_SERVO_MOVE_S > 0
+            )
+
+        start = self.pulse_ms
+        if not ramp or abs(pulse_ms - start) < 1e-9:
+            value = self._write_pulse_ms(pulse_ms)
+            if self.dry_run:
+                if log:
+                    print(f"[front-servo] -> {pulse_ms:.3f} ms (dry run, value={value:+.3f})")
+                return value
+            if self._servo is not None:
+                self._servo.value = value
             if log:
-                print(f"[front-servo] -> {pulse_ms:.3f} ms (dry run, value={value:+.3f})")
+                print(f"[front-servo] -> {pulse_ms:.3f} ms")
             return value
-        self._servo.value = value
+
+        span = self._max_pulse_ms - self._min_pulse_ms
+        if span <= 0:
+            move_s = 0.0
+        else:
+            move_s = self.cfg.FRONT_SERVO_MOVE_S * abs(pulse_ms - start) / span
+        step_s = self.cfg.FRONT_SERVO_RAMP_STEP_S
+        steps = max(1, round(move_s / step_s))
+        step_delay = move_s / steps
+
+        for i in range(1, steps + 1):
+            t = i / steps
+            intermediate = start + (pulse_ms - start) * t
+            value = self._write_pulse_ms(intermediate)
+            if not self.dry_run and self._servo is not None:
+                self._servo.value = value
+            if i < steps:
+                time.sleep(step_delay)
+
         if log:
-            print(f"[front-servo] -> {pulse_ms:.3f} ms")
+            print(f"[front-servo] -> {pulse_ms:.3f} ms ({move_s:.2f}s ramp)")
         return value
 
     def raise_up(self):
