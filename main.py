@@ -365,9 +365,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
             if cmd.action is Action.FORWARD and front_servo is not None:
                 drive_elapsed += dt
                 if drive_elapsed >= cfg.FRONT_SERVO_INTERVAL_S:
-                    front_servo.raise_up()          # up to 90 deg (keeps driving)
-                    time.sleep(cfg.FRONT_SERVO_HOLD_S)
-                    front_servo.lower()
+                    front_servo.lift_cycle()
                     drive_elapsed = 0.0
 
             if nav.mode is Mode.DONE:

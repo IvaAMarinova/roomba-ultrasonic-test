@@ -104,6 +104,12 @@ class FrontServo:
         """Return the scoop to its resting angle (FRONT_SERVO_DOWN_DEG)."""
         self.move_to(self.cfg.FRONT_SERVO_DOWN_DEG)
 
+    def lift_cycle(self):
+        """Raise, hold at the top, then lower -- same sequence as main.py while driving."""
+        self.raise_up()
+        time.sleep(self.cfg.FRONT_SERVO_HOLD_S)
+        self.lower()
+
     def startup(self):
         """Hold the scoop raised at launch, then lower to the collecting position.
 
