@@ -174,11 +174,26 @@ class NavigationController:
                       or abs(angle_diff(self.target_heading, self.heading_rel))
                       <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
         contact_close = getattr(cfg, "WALL_CONTACT_STOP_CM", 25.0)
+        # Within one standoff of where odometry expects the wall (tighter than
+        # WALL_EXPECT_TOL_CM). Rejects mid-lane obstacles while still turning at
+        # ~FRONT_STOP when wheel time is roughly caught up.
+        standoff_aligned = end_dist >= expected_gap - cfg.FRONT_STOP_DISTANCE_CM
+        # Contact override only when we're plausibly at the far end (sum ≈ arena
+        # length, or odometry deep in the lane). Stops mid-lane ~17 cm readings
+        # from turning when odometry has lagged.
+        near_far_end = (self.lane_distance + end_dist
+                        >= cfg.ARENA_LENGTH_CM - cfg.WALL_EXPECT_TOL_CM)
+        # Allow contact override near the start of the lane too (odometry may
+        # still read y~46 when the car is physically at the far wall).
+        odo_still_near_start = (self.lane_distance
+                                < cfg.ARENA_LENGTH_CM * 0.35)
+        contact_hold = (end_dist <= contact_close
+                        and (near_far_end or odo_still_near_start))
         end_hold = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                     and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
                     and heading_ok
                     and not self._at_pit()
-                    and (wall_plausible or end_dist <= contact_close))
+                    and (wall_plausible or standoff_aligned or contact_hold))
         self._wall_persist = self._wall_persist + 1 if end_hold else 0
         wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
         # Odometry backstop only applies when we have NO believed wall (total
@@ -189,7 +204,7 @@ class NavigationController:
                         and heading_ok)
 
         if wall_trigger or odo_backstop:
-            if wall_trigger and not wall_plausible:
+            if wall_trigger and not wall_plausible and not standoff_aligned:
                 self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
                                                   cfg.ARENA_LENGTH_CM))
                 forward = math.cos(math.radians(self.target_heading)) >= 0.0
@@ -208,11 +223,13 @@ class NavigationController:
             self.mode = Mode.TURNING
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
             if wall_trigger:
-                if wall_plausible:
+                if wall_plausible or standoff_aligned:
                     trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
-                else:
+                elif contact_hold:
                     trigger = (f"wall contact {end_dist:.0f}cm "
                                f"(x{end_agree} agree, odometry lag)")
+                else:
+                    trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
             else:
                 trigger = "odometry backstop (no wall seen)"
             return self._remember(Command(

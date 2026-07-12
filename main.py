@@ -444,9 +444,10 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             _log_status(logger, nav, readings, yaw, cmd)
 
             if babysit:
+                motors.stop(logger)
                 result = input('Execute? (Y/n): ')
                 if result.strip().lower() not in ('y', ''):
-                    logger.log('babysit', ending_prematurely=True, reason='command rejected')
+                    logger.log('babysit', ending_prematurely=True, reason='command rejected. input: ' + result)
                     break
 
             execute(logger, cmd, motors, cfg, imu, nav, disposer)
@@ -460,6 +461,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             if cmd.action is Action.FORWARD and front_servo is not None:
                 drive_elapsed += dt
                 if drive_elapsed >= cfg.FRONT_SERVO_INTERVAL_S:
+                    motors.stop(logger)  # HACK: this probably breaks more than it fixes
                     front_servo.lift_cycle()
                     drive_elapsed = 0.0
                     last_t = time.monotonic()   # scoop blocks -- don't bridge that gap
@@ -478,8 +480,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log-format',
                         type=str, choices=('pretty', 'json'), default='pretty')
-    parser.add_argument('--shell', type=bool, default=False)
-    parser.add_argument('--babysit', type=bool, default=False)
+    parser.add_argument('--shell', action='store_true')
+    parser.add_argument('--babysit', action='store_true')
     args = parser.parse_args()
 
     cfg = config

@@ -286,6 +286,18 @@ def test_lane_end_rejects_close_reading_far_from_expected():
     assert cmd.action is Action.FORWARD
 
 
+def test_standoff_aligned_turns_at_configured_gap():
+    """When odometry is caught up, turn at FRONT_STOP without grinding to contact."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = 171.0
+    n.y = 171.0
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(reading(front_left=40.5, front_right=40.0), yaw=0.0, dt=0.1)
+    assert cmd.action is Action.TURN_RIGHT
+    assert "contact" not in cmd.reason
+
+
 def test_phantom_far_wall_not_anchored_near_start():
   n = nav()
   n.lane_distance = 10.0

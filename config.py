@@ -156,8 +156,10 @@ BACK_SENSORS = ("back_left", "back_right")
 #   throws off the time-based estimate. Odometry is only the backstop (used if all
 #   front sensors drop out -- see LANE_END_MARGIN_CM).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 40.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
-FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
+FRONT_STOP_DISTANCE_CM = 45.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
+                                 # Median-of-two often reads ~42–43 cm at the real ~40 cm standoff;
+                                 # 41 rejected 42.7 and the turn fired at ~18 cm instead.
+FRONT_SLOW_DISTANCE_CM = 55.0    # start slowing down / preparing to turn
 # NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
 
 # ---------------------------------------------------------------------------
@@ -177,9 +179,10 @@ FRONT_SLOW_DISTANCE_CM = 50.0    # start slowing down / preparing to turn
 FRONT_AGREE_TOL_CM = 15.0        # front readings within this of each other "agree"
 FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
 WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
-WALL_PERSIST_TICKS = 3           # consecutive ticks the wall-stop must hold before turning
+WALL_PERSIST_TICKS = 1           # consecutive ticks the wall-stop must hold before turning
 WALL_HEADING_ALIGN_DEG = 30.0    # only fuse / stop on a front wall when square to the lane heading
-WALL_CONTACT_STOP_CM = 25.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
+WALL_CONTACT_STOP_CM = 28.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
+                                 # 28 not 25: medians land ~25.5 at contact; 25.0 missed and delayed the turn
 
 # ---------------------------------------------------------------------------
 # Cross-lane (x) position.
