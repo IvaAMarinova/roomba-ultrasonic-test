@@ -468,6 +468,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--log-format',
                         type=str, choices=('pretty', 'json'), default='pretty')
+    parser.add_argument('--shell', type=bool, default=False)
     args = parser.parse_args()
 
     cfg = config
@@ -484,7 +485,9 @@ def main():
         imu = IMU(logger, cfg)
     try:
         front_servo.startup()
-        if cfg.USE_SENSORS:
+        if args.shell:
+            breakpoint()
+        elif cfg.USE_SENSORS:
             run_navigation(logger, motors, cfg, imu, front_servo)
         else:
             run_drive_test(logger, motors, cfg, imu)
