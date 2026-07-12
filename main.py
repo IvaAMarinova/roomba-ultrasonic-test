@@ -227,8 +227,9 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     """Disposal maneuver for a SMALL (car-sized) pit: seat the rear over it, dump.
 
       1. Turn so the car's BACK faces the pit.
-      2. Reverse DISPOSE_REVERSE_CM to place the rear directly over the pit.
-      3. Dump (placeholder until the disposal servo lands -- see actuators.Disposer).
+      2. Lift the rear door and reverse DISPOSE_REVERSE_CM together so the back
+         seats over the pit with the door already opening.
+      3. Hold with the door open, then close it (actuators.Disposer).
       4. Pull the same distance forward to get clear of the pit.
       5. Re-orient to the lane heading so the sweep resumes cleanly.
 
@@ -246,7 +247,9 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
                 or abs(angle_diff(target, cur)) > cfg.ORIENT_SKIP_DEG):
             _spin_to_heading(logger, motors, cfg, imu, nav, target)
 
+    door_thread = disposer.start_opening()
     rev_s = _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
+    disposer.join_opening(door_thread)
     logger.log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
 
     logger.log("dispose", step="dump", hold_s=cfg.DISPOSE_HOLD_S)

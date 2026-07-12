@@ -10,6 +10,7 @@ fall back to dry-run logging off-Pi or when dependencies are missing.
   Disposer   -- dump sequence at the pit (open door, hold, close).
 """
 
+import threading
 import time
 
 import config as default_config
@@ -295,18 +296,37 @@ class Disposer:
         self.cfg = cfg
         self._door = BackServo(cfg)
 
-    def dump_cycle(self):
-        """Open the rear door, hold while balls fall out, then close."""
+    def start_opening(self):
+        """Begin opening the rear door on a background thread (ramped move).
+
+        Pair with reverse driving so the door lifts while backing over the pit.
+        Call join_opening() before hold_open_and_close().
+        """
         print("[disposer] opening rear door")
-        self._door.open_door()
+        thread = threading.Thread(target=self._door.open_door, daemon=True)
+        thread.start()
+        return thread
+
+    def join_opening(self, thread):
+        """Wait until start_opening()'s ramp finishes."""
+        if thread is not None:
+            thread.join()
+
+    def hold_open_and_close(self):
+        """Hold with the rear door open, then close it."""
         time.sleep(self.cfg.DISPOSE_HOLD_S)
         print("[disposer] closing rear door")
         self._door.close_door()
 
+    def dump_cycle(self):
+        """Open the rear door, hold while balls fall out, then close."""
+        self.start_opening().join()
+        self.hold_open_and_close()
+
     def dump(self):
-        """Run one disposal dump cycle (same as at the pit)."""
+        """Hold with door open, then close (door should already be opening/open)."""
         print("[disposer] DUMP")
-        self.dump_cycle()
+        self.hold_open_and_close()
 
     def cleanup(self):
         self._door.cleanup()
