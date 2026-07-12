@@ -4,9 +4,9 @@ import math
 # Arena geometry (known and fixed for the competition).
 # ---------------------------------------------------------------------------
 # ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
-# ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
-ARENA_WIDTH_CM = 150.0        # across the lanes (the car steps sideways here)
-ARENA_LENGTH_CM = 212.0       # along each lane (the long axis the car runs)
+ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
+ARENA_WIDTH_CM = 120.0        # across the lanes (the car steps sideways here)
+#ARENA_LENGTH_CM = 60.0       # along each lane (the long axis the car runs)
 
 ROBOT_WIDTH_CM = 50.0         # physical width of the car
 
@@ -14,7 +14,7 @@ ROBOT_WIDTH_CM = 50.0         # physical width of the car
 # with no gaps this must be <= ROBOT_WIDTH_CM; a little less gives overlap.
 # 210 / 45 ~= 5 lanes. Bigger = wider shift (faster, but leaves unswept strips
 # once it exceeds the car width).
-LANE_WIDTH_CM = 35.0
+LANE_WIDTH_CM = 15.0
 
 # How many lanes make up a full sweep of the arena = how wide the arena is
 # divided by how far we step each lane (rounded UP so the far edge is covered).
@@ -90,6 +90,7 @@ COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes fr
 # ---------------------------------------------------------------------------
 FRONT_SERVO_PIN = 18                # BCM pin for the front servo PWM signal
 FRONT_SERVO_DOWN_PULSE_MS = 0.780   # resting / collecting pulse width
+#FRONT_SERVO_DOWN_PULSE_MS = 1.130    # resting / collecting pulse width
 FRONT_SERVO_UP_PULSE_MS = 1.840     # raised pulse width
 FRONT_SERVO_MOVE_S = 0.80           # seconds for full down<->up travel (0 = instant jump)
 FRONT_SERVO_RAMP_STEP_S = 0.02      # update interval while ramping
@@ -204,7 +205,7 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # ---------------------------------------------------------------------------
 # Motion parameters.
 # ---------------------------------------------------------------------------
-DRIVE_SPEED = 0.3                # nominal forward speed (0..1 duty)
+DRIVE_SPEED = 0.4                # nominal forward speed (0..1 duty)
 SLOW_SPEED = 0.2                 # forward speed when an obstacle is getting close
 TURN_SPEED = 0.1                 # in-place rotation speed
 
@@ -300,7 +301,7 @@ CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
 #       H-bridges and turning on the real car (no sensors / dividers needed yet).
 #   USE_SENSORS = True  -> normal sensor-driven navigation.
 # ---------------------------------------------------------------------------
-USE_SENSORS = True
+USE_SENSORS = False
 
 # Open-loop maneuver script used when USE_SENSORS is False.
 # Each step is (action, seconds), where action is one of:
@@ -308,9 +309,9 @@ USE_SENSORS = True
 # Turn steps use TURN_TIME_S so they should be ~90 degrees once it's tuned.
 DRIVE_TEST_SEQUENCE = [
     ("forward", 2.0),
-    ("left",    TURN_TIME_S),
-    ("forward", 2.0),
-    ("right",   TURN_TIME_S),
-    ("forward", 2.0),
-    ("stop",    1.0),
+    #("left",    TURN_TIME_S),
+    #("forward", 2.0),
+    #("right",   TURN_TIME_S),
+    #("forward", 2.0),
+    #("stop",    1.0),
 ]
