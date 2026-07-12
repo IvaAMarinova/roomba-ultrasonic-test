@@ -16,7 +16,8 @@ This is usually clock-stretching on the Pi -- see Adafruit's guide and add
 software I2C (i2c-gpio overlay + adafruit-extended-bus).
 
 We monkey-patch _handle_packet() to skip command-channel traffic and to drop
-corrupted/unknown sensor batches instead of crashing the turn loop.
+corrupted/unknown sensor batches instead of crashing the turn loop. yaw() also
+swallows transient read errors (KeyError, IndexError, …) from garbled I2C.
 """
 
 import math
@@ -123,8 +124,9 @@ class IMU:
         try:
             quat = self._bno.quaternion
             x, y, z, w = quat[0], quat[1], quat[2], quat[3]
-        except (KeyError, TypeError, ValueError, RuntimeError, OSError):
-            # KeyError / OSError: garbled I2C traffic on the Pi hardware bus.
+        except (KeyError, IndexError, TypeError, ValueError, RuntimeError, OSError):
+            # KeyError / IndexError / OSError: garbled I2C traffic on the Pi
+            # hardware bus (unknown report_id, bad channel index in _read_packet).
             # Skip the sample and let the turn loop keep polling.
             return None
         siny_cosp = 2 * (w * z + x * y)

@@ -79,6 +79,11 @@ class PulseWidthServo:
 
     Endpoints may be in either order (e.g. back door closed can be higher pulse
     than open). gpiozero always gets min/max of the two endpoint values.
+
+    With use_pigpio_hold=True the pin is driven via pigpiod set_servo_pulsewidth
+    instead of gpiozero Servo. pigpiod keeps hardware PWM running at the last
+    commanded width until it is changed -- never pulsewidth 0 (detach), which
+    lets an analog servo drift and buzz.
     """
 
     def __init__(
@@ -94,6 +99,8 @@ class PulseWidthServo:
         initial_pulse_ms=None,
         dry_run=None,
         calibration=False,
+        use_pigpio_hold=False,
+        hold_pulse_ms=None,
     ):
         self.cfg = cfg
         self.pin = pin
@@ -101,8 +108,11 @@ class PulseWidthServo:
         self.calibration = calibration
         self.move_s = move_s
         self.ramp_step_s = ramp_step_s
+        self.use_pigpio_hold = use_pigpio_hold
+        self.hold_pulse_ms = hold_pulse_ms
         self.dry_run = (not _HAS_SERVO) if dry_run is None else dry_run
         self._servo = None
+        self._pi = None
         if initial_pulse_ms is None:
             initial_pulse_ms = endpoint_a_ms
         self.pulse_ms = initial_pulse_ms
@@ -115,32 +125,59 @@ class PulseWidthServo:
             self._max_pulse_ms = max(endpoint_a_ms, endpoint_b_ms)
 
         if not self.dry_run:
-            if calibration:
-                min_pulse_s = SERVO_HW_MIN_PULSE_S
-                max_pulse_s = SERVO_HW_MAX_PULSE_S
-                initial = pulse_ms_to_value(
-                    initial_pulse_ms,
-                    self._min_pulse_ms,
-                    self._max_pulse_ms,
-                )
+            if use_pigpio_hold:
+                self._pi = Device.pin_factory.connection
+                self._apply_pulse_hw(initial_pulse_ms)
             else:
-                min_pulse_s = self._min_pulse_ms / 1000.0
-                max_pulse_s = self._max_pulse_ms / 1000.0
-                initial = pulse_ms_to_value(
-                    initial_pulse_ms,
-                    self._min_pulse_ms,
-                    self._max_pulse_ms,
+                if calibration:
+                    min_pulse_s = SERVO_HW_MIN_PULSE_S
+                    max_pulse_s = SERVO_HW_MAX_PULSE_S
+                    initial = pulse_ms_to_value(
+                        initial_pulse_ms,
+                        self._min_pulse_ms,
+                        self._max_pulse_ms,
+                    )
+                else:
+                    min_pulse_s = self._min_pulse_ms / 1000.0
+                    max_pulse_s = self._max_pulse_ms / 1000.0
+                    initial = pulse_ms_to_value(
+                        initial_pulse_ms,
+                        self._min_pulse_ms,
+                        self._max_pulse_ms,
+                    )
+                self._servo = Servo(
+                    pin,
+                    min_pulse_width=min_pulse_s,
+                    max_pulse_width=max_pulse_s,
+                    initial_value=initial,
                 )
-            self._servo = Servo(
-                pin,
-                min_pulse_width=min_pulse_s,
-                max_pulse_width=max_pulse_s,
-                initial_value=initial,
-            )
+
+    def _pulse_us(self, pulse_ms):
+        return int(round(pulse_ms * 1000.0))
 
     def _write_pulse_ms(self, pulse_ms):
         self.pulse_ms = pulse_ms
         return pulse_ms_to_value(pulse_ms, self._min_pulse_ms, self._max_pulse_ms)
+
+    def _apply_pulse_hw(self, pulse_ms):
+        """Drive the servo pin; pigpio path keeps PWM active at pulse_ms."""
+        if self.dry_run:
+            return self._write_pulse_ms(pulse_ms)
+        if self._pi is not None:
+            self._write_pulse_ms(pulse_ms)
+            self._pi.set_servo_pulsewidth(self.pin, self._pulse_us(pulse_ms))
+            return self.pulse_ms
+        if self._servo is not None:
+            value = self._write_pulse_ms(pulse_ms)
+            self._servo.value = value
+            return value
+        return self._write_pulse_ms(pulse_ms)
+
+    def hold(self):
+        """Re-assert the idle hold pulse (pigpio hold mode only)."""
+        if self.hold_pulse_ms is None:
+            return self.pulse_ms
+        return self.move_to_pulse_ms(self.hold_pulse_ms, log=False, ramp=False)
 
     def move_to_pulse_ms(self, pulse_ms, *, log=True, ramp=None):
         """Command the servo to `pulse_ms`, ramping unless in calibration mode."""
@@ -150,14 +187,12 @@ class PulseWidthServo:
 
         start = self.pulse_ms
         if not ramp or abs(pulse_ms - start) < 1e-9:
-            value = self._write_pulse_ms(pulse_ms)
+            value = self._apply_pulse_hw(pulse_ms)
             if self.dry_run:
                 if log:
                     print(f"[{self.log_name}] -> {pulse_ms:.3f} ms "
                           f"(dry run, value={value:+.3f})")
                 return value
-            if self._servo is not None:
-                self._servo.value = value
             if log:
                 print(f"[{self.log_name}] -> {pulse_ms:.3f} ms")
             return value
@@ -173,9 +208,7 @@ class PulseWidthServo:
         for i in range(1, steps + 1):
             t = i / steps
             intermediate = start + (pulse_ms - start) * t
-            value = self._write_pulse_ms(intermediate)
-            if not self.dry_run and self._servo is not None:
-                self._servo.value = value
+            value = self._apply_pulse_hw(intermediate)
             if i < steps:
                 time.sleep(step_delay)
 
@@ -184,6 +217,12 @@ class PulseWidthServo:
         return value
 
     def cleanup(self):
+        if self.use_pigpio_hold and self._pi is not None:
+            hold_ms = (self.hold_pulse_ms if self.hold_pulse_ms is not None
+                       else self.pulse_ms)
+            self._apply_pulse_hw(hold_ms)
+            self._pi = None
+            return
         if self._servo is not None:
             self._servo.detach()
             self._servo.close()
@@ -251,7 +290,11 @@ class FrontServo:
 
 
 class BackServo:
-    """Rear dump door servo on BACK_SERVO_PIN."""
+    """Rear dump door servo on BACK_SERVO_PIN.
+
+    Uses pigpio hardware PWM hold at BACK_SERVO_CLOSED_PULSE_MS whenever idle so
+    the door does not buzz or drift when disposal is not running.
+    """
 
     def __init__(self, cfg=default_config, dry_run=None, calibration=False):
         self.cfg = cfg
@@ -266,6 +309,8 @@ class BackServo:
             initial_pulse_ms=cfg.BACK_SERVO_CLOSED_PULSE_MS,
             dry_run=dry_run,
             calibration=calibration,
+            use_pigpio_hold=not calibration,
+            hold_pulse_ms=cfg.BACK_SERVO_CLOSED_PULSE_MS,
         )
 
     @property
@@ -292,6 +337,10 @@ class BackServo:
 
     def open_door(self):
         self.move_to_pulse_ms(self.cfg.BACK_SERVO_OPEN_PULSE_MS)
+
+    def hold_closed(self):
+        """Keep the rear door locked at the closed pulse (pigpio hold)."""
+        self._driver.hold()
 
     def cleanup(self):
         self._driver.cleanup()

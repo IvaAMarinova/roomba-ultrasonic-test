@@ -286,6 +286,22 @@ def test_lane_end_rejects_close_reading_far_from_expected():
     assert cmd.action is Action.FORWARD
 
 
+def test_inferred_standoff_rejects_phantom_close_at_lane_start():
+    """y~37 with ~39 cm must not turn — inferred far end but odo disagrees."""
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = 36.8
+    cmd = n.decide(reading(front_left=42.65, front_right=35.71), yaw=1.0, dt=0.05)
+    assert cmd.action is Action.FORWARD
+
+
+def test_inferred_standoff_turns_when_odo_matches_wall():
+    n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
+    n.lane_distance = 169.0
+    n.y = 169.0
+    cmd = n.decide(reading(front_left=43.0, front_right=40.2), yaw=1.0, dt=0.05)
+    assert cmd.action is Action.TURN_RIGHT
+
+
 def test_standoff_aligned_turns_at_configured_gap():
     """When odometry is caught up, turn at FRONT_STOP without grinding to contact."""
     n = nav(cfg_with(PIT_X_CM=-1e4, PIT_Y_CM=-1e4))
