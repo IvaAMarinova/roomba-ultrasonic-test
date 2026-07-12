@@ -392,7 +392,7 @@ def run_drive_test(logger, motors, cfg, imu=None):
     motors.stop(logger)
 
 
-def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
+def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=False):
     """IMU + odometry navigation loop with block disposal at the pit."""
     # Imported here so the drive-test mode never needs the sensor stack.
     from sensors import UltrasonicArray
@@ -439,6 +439,13 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None):
             yaw = imu.yaw() if imu is not None else None
             cmd = nav.decide(readings, yaw, dt)
             _log_status(logger, nav, readings, yaw, cmd)
+
+            if babysit:
+                result = input('Execute? (Y/n): ')
+                if result.strip().lower() not in ('y', ''):
+                    logger.log('babysit', ending_prematurely=True, reason='command rejected')
+                    break
+
             execute(logger, cmd, motors, cfg, imu, nav, disposer)
 
             if cmd.action is not Action.FORWARD:
@@ -469,6 +476,7 @@ def main():
     parser.add_argument('--log-format',
                         type=str, choices=('pretty', 'json'), default='pretty')
     parser.add_argument('--shell', type=bool, default=False)
+    parser.add_argument('--babysit', type=bool, default=False)
     args = parser.parse_args()
 
     cfg = config
@@ -488,7 +496,7 @@ def main():
         if args.shell:
             breakpoint()
         elif cfg.USE_SENSORS:
-            run_navigation(logger, motors, cfg, imu, front_servo)
+            run_navigation(logger, motors, cfg, imu, front_servo, babysit=args.babysit)
         else:
             run_drive_test(logger, motors, cfg, imu)
     except KeyboardInterrupt:
