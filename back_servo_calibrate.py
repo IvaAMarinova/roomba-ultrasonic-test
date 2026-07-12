@@ -5,7 +5,7 @@ Adjust the pulse width with +/- (or arrow keys) and read the current value in ms
 Uses the hardware pulse range for exploration; c/o jump to configured closed/open.
 
 Run on the Pi:  python3 back_servo_calibrate.py
-                GPIOZERO_PIN_FACTORY=pigpio python3 back_servo_calibrate.py
+                (requires pigpiod — actuators.py selects it automatically)
 Quit with:     q
 """
 

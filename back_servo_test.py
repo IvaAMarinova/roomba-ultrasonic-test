@@ -6,7 +6,7 @@ BACK_SERVO_OPEN_PULSE_MS, hold DISPOSE_HOLD_S, close to BACK_SERVO_CLOSED_PULSE_
 then pause DISPOSE_HOLD_S before the next cycle.
 
 Run on the Pi:  python3 back_servo_test.py
-                GPIOZERO_PIN_FACTORY=pigpio python3 back_servo_test.py
+                (requires pigpiod — actuators.py selects it automatically)
 Stop with:     Ctrl-C
 """
 

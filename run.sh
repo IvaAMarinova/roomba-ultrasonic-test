@@ -8,6 +8,9 @@
 set -euo pipefail
 [ $# -ge 1 ] || { echo "usage: $0 <script.py> [args...]" >&2; exit 2; }
 
+# Servos need pigpiod (hardware PWM). Installed from source on Debian Trixie.
+export GPIOZERO_PIN_FACTORY="${GPIOZERO_PIN_FACTORY:-pigpio}"
+
 tag=roomba-bot
 run_id="$(date +%Y%m%d-%H%M%S)-$$"
 

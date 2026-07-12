@@ -6,7 +6,7 @@ FRONT_SERVO_UP_PULSE_MS, hold FRONT_SERVO_HOLD_S, lower to FRONT_SERVO_DOWN_PULS
 then pause FRONT_SERVO_HOLD_S before the next cycle.
 
 Run on the Pi:  python3 front_servo_test.py
-                GPIOZERO_PIN_FACTORY=pigpio python3 front_servo_test.py
+                (requires pigpiod — actuators.py selects it automatically)
 Stop with:     Ctrl-C
 """
 

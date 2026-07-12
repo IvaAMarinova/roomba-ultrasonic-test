@@ -10,13 +10,21 @@ fall back to dry-run logging off-Pi or when dependencies are missing.
   Disposer   -- dump sequence at the pit (open door, hold, close).
 """
 
+import os
 import threading
 import time
 
 import config as default_config
 
+# Hardware PWM via pigpiod — lgpio software-PWM servos jitter badly on Trixie.
+os.environ.setdefault("GPIOZERO_PIN_FACTORY", "pigpio")
+
 try:
-    from gpiozero import Servo
+    from gpiozero import Device, Servo
+    from gpiozero.pins.pigpio import PiGPIOFactory
+
+    if Device.pin_factory is None:
+        Device.pin_factory = PiGPIOFactory()
     _HAS_SERVO = True
 except (ImportError, RuntimeError):
     Servo = None
