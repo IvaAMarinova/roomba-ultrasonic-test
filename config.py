@@ -138,16 +138,16 @@ BACK_SERVO_RAMP_STEP_S = 0.02       # update interval while ramping
 SENSORS = {
     # Front -- ENABLED (primary position reference).
     "front_left":   {"trig": 6,  "echo": 5,  "enabled": True},   # left edge, outboard of bucket
-    "front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
+    #"front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
     "front_right":  {"trig": 23, "echo": 24, "enabled": True},   # right edge, outboard of bucket
     # Back -- future: reverse / disposal assistance.
     "back_left":    {"trig": 1,  "echo": 25, "enabled": True},   # back, left
-    "back_right":   {"trig": 7,  "echo": 8,  "enabled": True},   # back, right
+    #"back_right":   {"trig": 7,  "echo": 8,  "enabled": True},   # back, right
 }
 
 # Logical groupings used by the navigation logic.
-FRONT_SENSORS = ("front_left", "front_center", "front_right")
-BACK_SENSORS = ("back_left", "back_right")
+FRONT_SENSORS = ("front_left", "front_right")
+BACK_SENSORS = ("back_left")
 
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
@@ -313,5 +313,5 @@ DRIVE_TEST_SEQUENCE = [
     #("forward", 2.0),
     #("right",   TURN_TIME_S),
     #("forward", 2.0),
-    #("stop",    1.0),
+    ("stop",    1.0),
 ]
