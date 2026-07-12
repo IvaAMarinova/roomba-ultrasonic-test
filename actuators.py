@@ -27,8 +27,37 @@ try:
         Device.pin_factory = PiGPIOFactory()
     _HAS_SERVO = True
 except (ImportError, RuntimeError):
+    Device = None
+    PiGPIOFactory = None
     Servo = None
     _HAS_SERVO = False
+
+_pigpio_pi = None
+
+
+def _pigpio_connection():
+    """Return a pigpio.pi handle for hardware servo hold.
+
+    Uses gpiozero's PiGPIOFactory when active; otherwise opens pigpiod directly
+    so back-servo hold still works if another module picked a different factory
+    (e.g. teleop.py importing Robot before actuators).
+    """
+    global _pigpio_pi
+    if _pigpio_pi is not None and _pigpio_pi.connected:
+        return _pigpio_pi
+    if _HAS_SERVO and PiGPIOFactory is not None:
+        factory = Device.pin_factory
+        if isinstance(factory, PiGPIOFactory):
+            _pigpio_pi = factory.connection
+            return _pigpio_pi
+    import pigpio
+
+    _pigpio_pi = pigpio.pi()
+    if not _pigpio_pi.connected:
+        raise RuntimeError(
+            "pigpiod is not running -- start it with: sudo systemctl start pigpiod"
+        )
+    return _pigpio_pi
 
 # Wide pulse range for bench calibration scripts.
 SERVO_HW_MIN_PULSE_S = 0.0005
@@ -126,7 +155,7 @@ class PulseWidthServo:
 
         if not self.dry_run:
             if use_pigpio_hold:
-                self._pi = Device.pin_factory.connection
+                self._pi = _pigpio_connection()
                 self._apply_pulse_hw(initial_pulse_ms)
             else:
                 if calibration:
