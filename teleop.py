@@ -16,6 +16,8 @@ Structured JSON lines go to stdout and teleop_recordings/<session>.jsonl.
 Each line has monotonic t (seconds), pose (x/y/heading), all ultrasonic
 readings, IMU yaw, and derived wall summaries. Space or --snapshot-interval
 captures camera JPEGs keyed by snapshot_id.
+
+Replay on a PC:  python visualize_teleop.py teleop_recordings/<session>.jsonl
 """
 
 import argparse
