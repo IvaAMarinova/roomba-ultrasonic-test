@@ -19,6 +19,7 @@ camera JPEG saved under teleop_recordings/ (or --record-dir).
 
 import argparse
 import os
+import threading
 import time
 
 # Match actuators.py: servos need pigpiod; set before any gpiozero import.
@@ -67,28 +68,49 @@ def _create_mock_robot():
     return _MockRobot()
 
 
-def _create_hardware_robot():
+class _DriveRobot:
+    """Optional direction inversion between UI labels and gpiozero Robot."""
+
+    def __init__(self, inner, *, invert_forward: bool = False, invert_turn: bool = False) -> None:
+        self._inner = inner
+        self._invert_forward = invert_forward
+        self._invert_turn = invert_turn
+
+    def forward(self, speed: float) -> None:
+        fn = self._inner.backward if self._invert_forward else self._inner.forward
+        fn(speed)
+
+    def backward(self, speed: float) -> None:
+        fn = self._inner.forward if self._invert_forward else self._inner.backward
+        fn(speed)
+
+    def left(self, speed: float) -> None:
+        fn = self._inner.right if self._invert_turn else self._inner.left
+        fn(speed)
+
+    def right(self, speed: float) -> None:
+        fn = self._inner.left if self._invert_turn else self._inner.right
+        fn(speed)
+
+    def stop(self) -> None:
+        self._inner.stop()
+
+
+def _create_hardware_robot(cfg):
     from gpiozero import Robot, PhaseEnableMotor
-    from hal import LEFT_MOTOR_DIR_GPIO, LEFT_MOTOR_PWM_GPIO
-    from hal import RIGHT_MOTOR_DIR_GPIO, RIGHT_MOTOR_PWM_GPIO
 
-    return Robot(
-        left=PhaseEnableMotor(LEFT_MOTOR_DIR_GPIO, LEFT_MOTOR_PWM_GPIO),
-        right=PhaseEnableMotor(RIGHT_MOTOR_DIR_GPIO, RIGHT_MOTOR_PWM_GPIO),
+    left = cfg.MOTORS["left"]
+    right = cfg.MOTORS["right"]
+    inner = Robot(
+        left=PhaseEnableMotor(left["dir"], left["pwm"]),
+        right=PhaseEnableMotor(right["dir"], right["pwm"]),
     )
+    # gpiozero forward/back sense is opposite to driving intent on this chassis.
+    return _DriveRobot(inner, invert_forward=True)
 
 
-def _create_back_servo_hold():
-    nav_dir = _navigation_dir()
-    if nav_dir not in sys.path:
-        sys.path.insert(0, nav_dir)
-    from actuators import BackServo
-    import config
-
-    servo = BackServo(config)
-    print(f"[back-servo] holding closed at {config.BACK_SERVO_CLOSED_PULSE_MS:.3f} ms "
-          f"(GPIO {config.BACK_SERVO_PIN})")
-    return servo
+def _run_async(target, *args, **kwargs) -> None:
+    threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
 
 
 class TeleopApp:
@@ -102,7 +124,9 @@ class TeleopApp:
         robot,
         *,
         logger,
+        front_servo=None,
         back_servo=None,
+        dispose_hold_s: float = 2.0,
         sensors=None,
         imu=None,
         camera=None,
@@ -111,7 +135,9 @@ class TeleopApp:
     ) -> None:
         self._robot = robot
         self._logger = logger
+        self._front_servo = front_servo
         self._back_servo = back_servo
+        self._dispose_hold_s = dispose_hold_s
         self._sensors = sensors
         self._imu = imu
         self._camera = camera
@@ -120,6 +146,7 @@ class TeleopApp:
         self._speed: float = 0.5
         self._direction: str | None = None
         self._held: set[str] = set()
+        self._servo_busy = False
 
         self._root = tk.Tk()
         self._root.title("ROOMBA Teleop")
@@ -156,8 +183,13 @@ class TeleopApp:
 
         hint = tk.Label(
             self._root,
-            text="WASD / arrows = drive   |   Space = stop + snapshot   |   Q = quit",
-            font=("monospace", 10),
+            text=(
+                "WASD / arrows = drive   |   Space = stop + snapshot   |   Q = quit\n"
+                "U/J = front up/down   K = scoop cycle   "
+                "O/C = door open/close   X = dispose"
+            ),
+            font=("monospace", 9),
+            justify="center",
             **style,
         )
         hint.pack(pady=(0, 8))
@@ -227,6 +259,47 @@ class TeleopApp:
         )
         speed_scale.pack(side="left", padx=4)
 
+        servo_frame = tk.Frame(self._root, bg="#1e1e2e")
+        servo_frame.pack(pady=(4, 4))
+
+        servo_btn = {
+            "bg": "#45475a",
+            "fg": "#cdd6f4",
+            "activebackground": "#585b70",
+            "activeforeground": "#cdd6f4",
+            "relief": "flat",
+            "font": ("monospace", 9, "bold"),
+            "width": 8,
+        }
+
+        tk.Button(
+            servo_frame, text="Scoop UP", command=self._front_raise, **servo_btn
+        ).grid(row=0, column=0, padx=3, pady=2)
+        tk.Button(
+            servo_frame, text="Scoop DN", command=self._front_lower, **servo_btn
+        ).grid(row=0, column=1, padx=3, pady=2)
+        tk.Button(
+            servo_frame, text="Scoop cycle", command=self._front_cycle, **servo_btn
+        ).grid(row=0, column=2, padx=3, pady=2)
+        tk.Button(
+            servo_frame, text="Door OPEN", command=self._back_open, **servo_btn
+        ).grid(row=1, column=0, padx=3, pady=2)
+        tk.Button(
+            servo_frame, text="Door CLOSE", command=self._back_close, **servo_btn
+        ).grid(row=1, column=1, padx=3, pady=2)
+        tk.Button(
+            servo_frame,
+            text="DISPOSE",
+            command=self._dispose,
+            bg="#fab387",
+            fg="#1e1e2e",
+            activebackground="#f9c89b",
+            activeforeground="#1e1e2e",
+            relief="flat",
+            font=("monospace", 9, "bold"),
+            width=8,
+        ).grid(row=1, column=2, padx=3, pady=2)
+
         self._status_var = tk.StringVar(value="STOPPED")
         status = tk.Label(
             self._root,
@@ -235,7 +308,73 @@ class TeleopApp:
             bg="#1e1e2e",
             fg="#a6e3a1",
         )
-        status.pack(pady=(4, 12))
+        status.pack(pady=(4, 4))
+
+        self._servo_status_var = tk.StringVar(value="servos: ready")
+        servo_status = tk.Label(
+            self._root,
+            textvariable=self._servo_status_var,
+            font=("monospace", 10),
+            bg="#1e1e2e",
+            fg="#89b4fa",
+        )
+        servo_status.pack(pady=(0, 12))
+
+    def _set_servo_status(self, text: str) -> None:
+        self._servo_status_var.set(text)
+
+    def _run_servo_action(self, label: str, action: str, fn) -> None:
+        if self._servo_busy:
+            self._set_servo_status(f"servos: busy ({label} ignored)")
+            return
+
+        def worker() -> None:
+            self._servo_busy = True
+            self._root.after(0, lambda: self._set_servo_status(f"servos: {label}..."))
+            try:
+                fn()
+                self._logger.log("teleop", action=action)
+            finally:
+                self._servo_busy = False
+                self._root.after(0, lambda: self._set_servo_status("servos: ready"))
+
+        _run_async(worker)
+
+    def _front_raise(self) -> None:
+        if self._front_servo is None:
+            return
+        self._run_servo_action("scoop up", "front_up", self._front_servo.raise_up)
+
+    def _front_lower(self) -> None:
+        if self._front_servo is None:
+            return
+        self._run_servo_action("scoop down", "front_down", self._front_servo.lower)
+
+    def _front_cycle(self) -> None:
+        if self._front_servo is None:
+            return
+        self._run_servo_action("scoop cycle", "front_cycle", self._front_servo.lift_cycle)
+
+    def _back_open(self) -> None:
+        if self._back_servo is None:
+            return
+        self._run_servo_action("door open", "back_open", self._back_servo.open_door)
+
+    def _back_close(self) -> None:
+        if self._back_servo is None:
+            return
+        self._run_servo_action("door close", "back_close", self._back_servo.close_door)
+
+    def _dispose(self) -> None:
+        if self._back_servo is None:
+            return
+
+        def cycle() -> None:
+            self._back_servo.open_door()
+            time.sleep(self._dispose_hold_s)
+            self._back_servo.close_door()
+
+        self._run_servo_action("disposing", "dispose", cycle)
 
     def _direction_for_key(self, key: str) -> str | None:
         if key in self.KEYS_FORWARD:
@@ -257,6 +396,24 @@ class TeleopApp:
             return
         if key == "q":
             self._quit()
+            return
+        if key == "u":
+            self._front_raise()
+            return
+        if key == "j":
+            self._front_lower()
+            return
+        if key == "k":
+            self._front_cycle()
+            return
+        if key == "o":
+            self._back_open()
+            return
+        if key == "c":
+            self._back_close()
+            return
+        if key == "x":
+            self._dispose()
             return
         direction = self._direction_for_key(key)
         if direction and key not in self._held:
@@ -365,6 +522,8 @@ class TeleopApp:
     def _quit(self) -> None:
         self._robot.stop()
         self._logger.log("teleop", phase="end")
+        if self._front_servo is not None:
+            self._front_servo.cleanup()
         if self._back_servo is not None:
             self._back_servo.hold_closed()
             self._back_servo.cleanup()
@@ -428,12 +587,19 @@ def main() -> None:
 
         camera = Camera(logger, config)
 
-    back_servo = None
+    from actuators import BackServo, FrontServo
+
+    front_servo = FrontServo(config)
+    back_servo = BackServo(config)
+    if args.hardware:
+        print(
+            f"[back-servo] holding closed at {config.BACK_SERVO_CLOSED_PULSE_MS:.3f} ms "
+            f"(GPIO {config.BACK_SERVO_PIN})"
+        )
+
     if args.hardware:
         print("Starting teleop in HARDWARE mode")
-        # Back servo before Robot so actuators can select pigpio first.
-        back_servo = _create_back_servo_hold()
-        robot = _create_hardware_robot()
+        robot = _create_hardware_robot(config)
     else:
         print("Starting teleop in MOCK mode (use --hardware for real motors)")
         robot = _create_mock_robot()
@@ -451,7 +617,9 @@ def main() -> None:
     app = TeleopApp(
         robot,
         logger=logger,
+        front_servo=front_servo,
         back_servo=back_servo,
+        dispose_hold_s=config.DISPOSE_HOLD_S,
         sensors=sensors,
         imu=imu,
         camera=camera,

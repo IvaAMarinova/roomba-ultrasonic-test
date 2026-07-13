@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Teleop manual snapshots (images + optional session logs)
+teleop_recordings/
