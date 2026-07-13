@@ -125,8 +125,7 @@ class TeleopApp:
         *,
         logger,
         front_servo=None,
-        back_servo=None,
-        dispose_hold_s: float = 2.0,
+        disposer=None,
         sensors=None,
         imu=None,
         camera=None,
@@ -136,8 +135,7 @@ class TeleopApp:
         self._robot = robot
         self._logger = logger
         self._front_servo = front_servo
-        self._back_servo = back_servo
-        self._dispose_hold_s = dispose_hold_s
+        self._disposer = disposer
         self._sensors = sensors
         self._imu = imu
         self._camera = camera
@@ -353,28 +351,40 @@ class TeleopApp:
     def _front_cycle(self) -> None:
         if self._front_servo is None:
             return
-        self._run_servo_action("scoop cycle", "front_cycle", self._front_servo.lift_cycle)
-
-    def _back_open(self) -> None:
-        if self._back_servo is None:
-            return
-        self._run_servo_action("door open", "back_open", self._back_servo.open_door)
-
-    def _back_close(self) -> None:
-        if self._back_servo is None:
-            return
-        self._run_servo_action("door close", "back_close", self._back_servo.close_door)
-
-    def _dispose(self) -> None:
-        if self._back_servo is None:
-            return
 
         def cycle() -> None:
-            self._back_servo.open_door()
-            time.sleep(self._dispose_hold_s)
-            self._back_servo.close_door()
+            # Same as run_navigation: stop driving before the blocking scoop move.
+            self._held.clear()
+            self._robot.stop()
+            self._direction = None
+            self._root.after(0, lambda: self._status_var.set("STOPPED"))
+            self._logger.log("teleop", action="stop")
+            self._front_servo.lift_cycle()
 
-        self._run_servo_action("disposing", "dispose", cycle)
+        self._run_servo_action("scoop cycle", "front_cycle", cycle)
+
+    def _back_open(self) -> None:
+        if self._disposer is None:
+            return
+        self._run_servo_action(
+            "door open",
+            "back_open",
+            lambda: self._disposer.join_opening(self._disposer.start_opening()),
+        )
+
+    def _back_close(self) -> None:
+        if self._disposer is None:
+            return
+        self._run_servo_action(
+            "door close",
+            "back_close",
+            self._disposer._door.close_door,
+        )
+
+    def _dispose(self) -> None:
+        if self._disposer is None:
+            return
+        self._run_servo_action("disposing", "dispose", self._disposer.dump_cycle)
 
     def _direction_for_key(self, key: str) -> str | None:
         if key in self.KEYS_FORWARD:
@@ -524,9 +534,9 @@ class TeleopApp:
         self._logger.log("teleop", phase="end")
         if self._front_servo is not None:
             self._front_servo.cleanup()
-        if self._back_servo is not None:
-            self._back_servo.hold_closed()
-            self._back_servo.cleanup()
+        if self._disposer is not None:
+            self._disposer._door.hold_closed()
+            self._disposer.cleanup()
         if self._sensors is not None:
             self._sensors.cleanup()
         self._root.destroy()
@@ -587,15 +597,16 @@ def main() -> None:
 
         camera = Camera(logger, config)
 
-    from actuators import BackServo, FrontServo
+    from actuators import Disposer, FrontServo
 
     front_servo = FrontServo(config)
-    back_servo = BackServo(config)
+    disposer = Disposer(config)
     if args.hardware:
         print(
             f"[back-servo] holding closed at {config.BACK_SERVO_CLOSED_PULSE_MS:.3f} ms "
             f"(GPIO {config.BACK_SERVO_PIN})"
         )
+        front_servo.startup()
 
     if args.hardware:
         print("Starting teleop in HARDWARE mode")
@@ -618,8 +629,7 @@ def main() -> None:
         robot,
         logger=logger,
         front_servo=front_servo,
-        back_servo=back_servo,
-        dispose_hold_s=config.DISPOSE_HOLD_S,
+        disposer=disposer,
         sensors=sensors,
         imu=imu,
         camera=camera,
