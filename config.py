@@ -28,6 +28,24 @@ NUM_LANES = math.ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)   # e.g. 210 / 35 = 6
 # being a separate hardcoded number. See that section.
 
 # ---------------------------------------------------------------------------
+# Hill strategy (slope at start, collect on the flat end, dump once at finish).
+#   CLIMB_FIRST  -- up the slope hugging the left wall, shovel raised.
+#   SWEEP        -- serpentine on the flat; scoop only when y >= COLLECTION_START_Y_CM.
+#   CLIMB_LAST   -- one more +y leg along the right edge after U-turns are blocked.
+#   DESCEND      -- downhill hugging the right wall, shovel raised, no scooping.
+#   TO_PIT       -- blocking drive in main.py: along start wall -> centre -> dump.
+# Set HILL_MODE = False to restore the old full-arena serpentine + mid-sweep pit.
+# ---------------------------------------------------------------------------
+HILL_MODE = True
+HILL_TOP_Y_CM = 55.0                # top of the slope; shovel lowers, sweep begins (TUNE)
+COLLECTION_START_Y_CM = 130.0       # only lift the scoop at the arena end (TUNE)
+RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
+RIGHT_WALL_STOP_CM = 22.0           # front_right this close -> hugging right wall
+LEFT_HUG_TRIM = -0.15               # constant steer while climbing (hug left wall)
+RIGHT_HUG_TRIM = 0.15               # constant steer while descending (hug right wall)
+FRONT_SERVO_CLIMB_PULSE_MS = 1.35   # raised enough to clear the slope (TUNE)
+
+# ---------------------------------------------------------------------------
 # Start pose and coordinate frame.
 #   The car starts in the BOTTOM-LEFT corner, facing along the arena length. We
 #   work in a "start-relative" frame: at startup the current IMU yaw is recorded

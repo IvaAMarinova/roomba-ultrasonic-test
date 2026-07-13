@@ -12,7 +12,7 @@ drives time forward on purpose.
 import types
 
 import config
-from navigation import NavigationController, Action, Mode
+from navigation import NavigationController, Action, Mode, Phase
 
 INF = float("inf")
 
@@ -36,12 +36,13 @@ def front_wall(dist, **kw):
 def cfg_with(**overrides):
     """A copy of config with a few values overridden (for isolated tests)."""
     base = {k: getattr(config, k) for k in dir(config) if k.isupper()}
+    base["HILL_MODE"] = False
     base.update(overrides)
     return types.SimpleNamespace(**base)
 
 
-def nav(cfg=config):
-    n = NavigationController(cfg)
+def nav(cfg=None):
+    n = NavigationController(cfg if cfg is not None else cfg_with())
     n.set_origin(0.0)  # IMU present, current facing = heading 0
     return n
 
@@ -79,7 +80,7 @@ def test_heading_left_of_target_trims_right():
 
 
 def test_no_imu_drives_open_loop_straight():
-    n = NavigationController(config)
+    n = NavigationController(cfg_with())
     n.set_origin(None)
     cmd = n.decide(reading(), yaw=None, dt=0.0)
     assert cmd.action is Action.FORWARD
@@ -505,6 +506,75 @@ def test_faulty_run_lane1_pose_after_contact_turn():
     cmd = n.decide(reading(), yaw=-180.0, dt=0.1)
     assert cmd.action is Action.FORWARD
     assert abs(n.y - 194.7) < 5.0
+
+
+# -- hill mode ---------------------------------------------------------------
+
+def hill_cfg(**overrides):
+    base = dict(
+        HILL_MODE=True,
+        HILL_TOP_Y_CM=50.0,
+        COLLECTION_START_Y_CM=100.0,
+        ARENA_WIDTH_CM=150.0,
+        ARENA_LENGTH_CM=212.0,
+        LANE_WIDTH_CM=35.0,
+        PIT_X_CM=75.0,
+        PIT_Y_CM=0.0,
+    )
+    base.update(overrides)
+    return cfg_with(**base)
+
+
+def test_hill_climbs_then_sweeps():
+    n = nav(hill_cfg())
+    assert n.phase is Phase.CLIMB_FIRST
+    n.lane_distance = 49.0
+    cmd = n.decide(reading(), yaw=0.0, dt=0.5)
+    assert cmd.action is Action.FORWARD
+    assert "climb" in cmd.reason
+    n.lane_distance = 51.0
+    n.decide(reading(), yaw=0.0, dt=0.0)
+    assert n.phase is Phase.SWEEP
+
+
+def test_hill_collects_only_at_end():
+    n = nav(hill_cfg(COLLECTION_START_Y_CM=150.0))
+    n.phase = Phase.SWEEP
+    n.y = 120.0
+    assert not n.collecting
+    n.y = 160.0
+    assert n.collecting
+
+
+def test_hill_right_edge_skips_uturn():
+    cfg = hill_cfg()
+    n = nav(cfg)
+    n.phase = Phase.SWEEP
+    n.x = cfg.ARENA_WIDTH_CM - cfg.LANE_WIDTH_CM
+    n.lane_distance = cfg.ARENA_LENGTH_CM - 50.0
+    cmd = None
+    for _ in range(config.WALL_PERSIST_TICKS):
+        cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                       yaw=0.0, dt=0.1)
+    assert cmd.action is Action.FORWARD
+    assert n.phase is Phase.CLIMB_LAST
+
+
+def test_hill_descend_then_pit():
+    cfg = hill_cfg()
+    n = nav(cfg)
+    n.phase = Phase.CLIMB_LAST
+    n.target_heading = 0.0
+    n.lane_distance = cfg.ARENA_LENGTH_CM - 40.0
+    for _ in range(config.WALL_PERSIST_TICKS):
+        n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5), yaw=0.0, dt=0.1)
+    assert n.phase is Phase.DESCEND
+    assert n.target_heading == 180.0
+    n.y = 10.0
+    n.lane_distance = cfg.ARENA_LENGTH_CM - 10.0
+    cmd = n.decide(reading(), yaw=180.0, dt=0.0)
+    assert n.phase is Phase.TO_PIT
+    assert cmd.action is Action.STOP
 
 
 def _run():

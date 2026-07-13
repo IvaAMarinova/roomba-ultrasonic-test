@@ -298,6 +298,10 @@ class FrontServo:
     def raise_up(self):
         self.move_to_pulse_ms(self.cfg.FRONT_SERVO_UP_PULSE_MS)
 
+    def climb(self):
+        """Intermediate scoop angle for driving on the slope without scraping."""
+        self.move_to_pulse_ms(self.cfg.FRONT_SERVO_CLIMB_PULSE_MS)
+
     def lower(self):
         self.move_to_pulse_ms(self.cfg.FRONT_SERVO_DOWN_PULSE_MS)
 

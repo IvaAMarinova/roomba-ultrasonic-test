@@ -61,6 +61,15 @@ class Mode(Enum):
     DONE = auto()
 
 
+class Phase(Enum):
+    """Macro stages for HILL_MODE (slope -> sweep -> descend -> pit)."""
+    CLIMB_FIRST = auto()
+    SWEEP = auto()
+    CLIMB_LAST = auto()
+    DESCEND = auto()
+    TO_PIT = auto()
+
+
 class Turn(Enum):
     LEFT = auto()
     RIGHT = auto()
@@ -112,6 +121,9 @@ class NavigationController:
         # Coverage: once the last lane (NUM_LANES-1) is finished, we're done.
         self._done = False
 
+        # Hill strategy phase (None when HILL_MODE is off).
+        self.phase = Phase.CLIMB_FIRST if getattr(cfg, "HILL_MODE", False) else None
+
         # Wall-fusion state (updated every tick by _update_pose).
         self.front_wall_cm = INF     # believed distance to the end wall, or INF
         self.front_agree = 0         # how many front sensors agreed this tick
@@ -121,6 +133,20 @@ class NavigationController:
         # Odometry bookkeeping for the bridge / expectation prior.
         self._last_speed = 0.0
         self._last_action = Action.STOP
+
+    @property
+    def collecting(self):
+        """True when the front scoop should run lift cycles."""
+        if not getattr(self.cfg, "HILL_MODE", False):
+            return True
+        return (self.phase is Phase.SWEEP
+                and self.y >= self.cfg.COLLECTION_START_Y_CM)
+
+    @property
+    def wants_climb_shovel(self):
+        if not getattr(self.cfg, "HILL_MODE", False):
+            return False
+        return self.phase in (Phase.CLIMB_FIRST, Phase.CLIMB_LAST, Phase.DESCEND)
 
     def note_blocking_maneuver(self):
         """Call after a blocking U-turn / dispose so the next tick does not odometry-bridge a long gap."""
@@ -146,8 +172,14 @@ class NavigationController:
 
     def decide(self, readings, yaw=None, dt=0.0):
         """Map sensors + IMU yaw + elapsed dt to a Command, updating pose/mode."""
-        cfg = self.cfg
         self._update_pose(readings, yaw, dt)
+        if getattr(self.cfg, "HILL_MODE", False):
+            return self._decide_hill(readings, yaw, dt)
+        return self._decide_serpentine(readings)
+
+    def _decide_serpentine(self, readings):
+        """Original full-arena serpentine with mid-sweep pit disposal."""
+        cfg = self.cfg
 
         # 0) Whole arena swept? Latch STOP and stay stopped.
         if self._done:
@@ -162,68 +194,23 @@ class NavigationController:
                 Action.DISPOSE, speed=0.0,
                 reason=f"reached pit ({self.collector}) -> dispose"))
 
-        # 2) End of lane? Primary = front sensors agree on a close wall AND either
-        #    odometry expects the end wall nearby (rejects a side obstacle when
-        #    left/right disagree) OR the reading is sustained contact-close (odometry
-        #    lagged but we're physically against the far wall). Backstop = odometry
-        #    if no qualifying wall is seen. Contact-close is suppressed at the pit.
-        end_dist, end_agree = self._lane_end_wall(readings)
-        expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
-        wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
-        heading_ok = (not self._has_heading
-                      or abs(angle_diff(self.target_heading, self.heading_rel))
-                      <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
-        contact_close = getattr(cfg, "WALL_CONTACT_STOP_CM", 25.0)
-        # Within one standoff of where odometry expects the wall (tighter than
-        # WALL_EXPECT_TOL_CM). Rejects mid-lane obstacles while still turning at
-        # ~FRONT_STOP when wheel time is roughly caught up.
-        standoff_aligned = end_dist >= expected_gap - cfg.FRONT_STOP_DISTANCE_CM
-        # Wall reading implies the far end (ARENA - end_dist deep) and odometry
-        # agrees within WALL_EXPECT_TOL — turn at standoff even if expected_gap
-        # math from lagged lane_distance alone would reject it.
-        inferred_ld = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
-                                   cfg.ARENA_LENGTH_CM))
-        inferred_near_far_end = (inferred_ld >= (cfg.ARENA_LENGTH_CM
-                                                 - cfg.LANE_END_MARGIN_CM
-                                                 - cfg.FRONT_STOP_DISTANCE_CM))
-        odo_matches_inferred = (abs(inferred_ld - self.lane_distance)
-                                <= cfg.WALL_EXPECT_TOL_CM)
-        inferred_standoff = (end_dist <= cfg.FRONT_STOP_DISTANCE_CM
-                             and inferred_near_far_end
-                             and odo_matches_inferred)
-        # Contact override only when we're plausibly at the far end (sum ≈ arena
-        # length, or odometry deep in the lane). Stops mid-lane ~17 cm readings
-        # from turning when odometry has lagged.
-        near_far_end = (self.lane_distance + end_dist
-                        >= cfg.ARENA_LENGTH_CM - cfg.WALL_EXPECT_TOL_CM)
-        # Allow contact override near the start of the lane too (odometry may
-        # still read y~46 when the car is physically at the far wall).
-        odo_still_near_start = (self.lane_distance
-                                < cfg.ARENA_LENGTH_CM * 0.35)
-        contact_hold = (end_dist <= contact_close
-                        and (near_far_end or odo_still_near_start))
-        end_hold = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
-                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
-                    and heading_ok
-                    and not self._at_pit()
-                    and (wall_plausible or standoff_aligned or contact_hold
-                         or inferred_standoff))
-        self._wall_persist = self._wall_persist + 1 if end_hold else 0
-        wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
-        # Odometry backstop only applies when we have NO believed wall (total
-        # dropout). With a wall in view the persistence-gated trigger governs, so
-        # a close wall re-anchoring lane_distance can't skip persistence.
-        odo_backstop = (self.pos_source != "WALL"
-                        and self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM)
-                        and heading_ok)
+        wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
+            self._lane_end_state(readings))
 
         if wall_trigger or odo_backstop:
+            expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
+            wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
+            standoff_aligned = end_dist >= expected_gap - cfg.FRONT_STOP_DISTANCE_CM
+            inferred_ld = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist, cfg.ARENA_LENGTH_CM))
+            inferred_near_far_end = (inferred_ld >= (cfg.ARENA_LENGTH_CM
+                                                     - cfg.LANE_END_MARGIN_CM
+                                                     - cfg.FRONT_STOP_DISTANCE_CM))
+            odo_matches_inferred = (abs(inferred_ld - self.lane_distance)
+                                    <= cfg.WALL_EXPECT_TOL_CM)
+            inferred_standoff = (end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+                                 and inferred_near_far_end and odo_matches_inferred)
             if wall_trigger and not wall_plausible and not standoff_aligned and not inferred_standoff:
-                self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
-                                                  cfg.ARENA_LENGTH_CM))
-                forward = math.cos(math.radians(self.target_heading)) >= 0.0
-                self.y = (cfg.START_Y_CM + self.lane_distance if forward
-                          else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
+                self._reanchor_lane_from_wall(end_dist)
             # Was that the end of the LAST lane? Then the arena is swept -> done.
             if self._lane_index >= cfg.NUM_LANES - 1:
                 self._done = True
@@ -236,27 +223,168 @@ class NavigationController:
             self._last_turn = turn
             self.mode = Mode.TURNING
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
-            if wall_trigger:
-                if wall_plausible or standoff_aligned or inferred_standoff:
-                    trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
-                elif contact_hold:
-                    trigger = (f"wall contact {end_dist:.0f}cm "
-                               f"(x{end_agree} agree, odometry lag)")
-                else:
-                    trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
-            else:
-                trigger = "odometry backstop (no wall seen)"
             return self._remember(Command(
                 action, speed=cfg.TURN_SPEED,
                 reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
 
-        # 3) Cruise forward, holding the lane heading with the IMU.
+        return self._cmd_cruise(readings, reason="cruising")
+
+    def _decide_hill(self, readings, yaw, dt):
+        """Slope climb -> end-zone sweep -> descend -> pit (no mid-run disposal)."""
+        cfg = self.cfg
+
+        if self._done:
+            self.mode = Mode.DONE
+            return self._remember(Command(Action.STOP, reason="run complete"))
+
+        if self.phase is Phase.TO_PIT:
+            self.mode = Mode.DONE
+            return self._remember(Command(Action.STOP, reason="at start wall -> pit"))
+
+        if self.phase is Phase.CLIMB_FIRST:
+            if self.y >= cfg.HILL_TOP_Y_CM:
+                self.phase = Phase.SWEEP
+                print(f"[hill] top of slope (y={self.y:.0f}) -> sweep, shovel down")
+            return self._cmd_cruise(
+                readings, reason="climbing slope",
+                extra_steer=cfg.LEFT_HUG_TRIM)
+
+        if self.phase is Phase.SWEEP:
+            wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
+                self._lane_end_state(readings))
+            if wall_trigger or odo_backstop:
+                if self._at_right_edge(readings):
+                    self.phase = Phase.CLIMB_LAST
+                    self.target_heading = 0.0
+                    self._wall_persist = 0
+                    print("[hill] right wall -> last climb")
+                    return self._cmd_cruise(
+                        readings, reason="right wall -> last climb",
+                        extra_steer=cfg.RIGHT_HUG_TRIM)
+                if wall_trigger and trigger.startswith("wall") and "contact" not in trigger:
+                    self._reanchor_lane_from_wall(end_dist)
+                turn = self._next_serpentine_turn
+                self._advance_serpentine()
+                self.mode = Mode.TURNING
+                action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
+                return self._remember(Command(
+                    action, speed=cfg.TURN_SPEED,
+                    reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
+            return self._cmd_cruise(readings, reason="sweeping")
+
+        if self.phase is Phase.CLIMB_LAST:
+            wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
+                self._lane_end_state(readings))
+            if wall_trigger or odo_backstop:
+                self.phase = Phase.DESCEND
+                self.target_heading = 180.0
+                self._wall_persist = 0
+                print("[hill] far wall -> descend")
+                return self._cmd_cruise(
+                    readings, reason="far wall -> descend",
+                    extra_steer=cfg.RIGHT_HUG_TRIM)
+            return self._cmd_cruise(
+                readings, reason="last climb",
+                extra_steer=cfg.RIGHT_HUG_TRIM)
+
+        if self.phase is Phase.DESCEND:
+            wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
+                self._lane_end_state(readings))
+            at_start = (self.y <= cfg.FRONT_STOP_DISTANCE_CM + 5.0
+                        or (wall_trigger and self.y <= cfg.HILL_TOP_Y_CM))
+            if at_start or (wall_trigger and self.target_heading == 180.0
+                            and self.y <= cfg.HILL_TOP_Y_CM):
+                self.phase = Phase.TO_PIT
+                print(f"[hill] start wall (y={self.y:.0f}) -> pit approach")
+                self.mode = Mode.DONE
+                return self._remember(Command(
+                    Action.STOP, reason="at start wall -> pit"))
+            return self._cmd_cruise(
+                readings, reason="descending slope",
+                extra_steer=cfg.RIGHT_HUG_TRIM)
+
+        return self._cmd_cruise(readings, reason="cruising")
+
+    def _cmd_cruise(self, readings, reason="", extra_steer=0.0):
+        """Forward at cruise speed with IMU heading-hold (+ optional wall-hug trim)."""
+        cfg = self.cfg
         self.mode = Mode.DRIVING
         speed = (cfg.SLOW_SPEED if self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM
                  else cfg.DRIVE_SPEED)
-        steer = self._cruise_trim(readings)
+        steer = self._cruise_trim(readings) + extra_steer
+        steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, steer))
         return self._remember(Command(
-            Action.FORWARD, speed=speed, steer=steer, reason="cruising"))
+            Action.FORWARD, speed=speed, steer=steer, reason=reason))
+
+    def _lane_end_state(self, readings):
+        """Return (wall_trigger, odo_backstop, end_dist, end_agree, trigger_reason)."""
+        cfg = self.cfg
+        end_dist, end_agree = self._lane_end_wall(readings)
+        expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
+        wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
+        heading_ok = (not self._has_heading
+                      or abs(angle_diff(self.target_heading, self.heading_rel))
+                      <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
+        contact_close = getattr(cfg, "WALL_CONTACT_STOP_CM", 25.0)
+        standoff_aligned = end_dist >= expected_gap - cfg.FRONT_STOP_DISTANCE_CM
+        inferred_ld = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
+                                   cfg.ARENA_LENGTH_CM))
+        inferred_near_far_end = (inferred_ld >= (cfg.ARENA_LENGTH_CM
+                                                 - cfg.LANE_END_MARGIN_CM
+                                                 - cfg.FRONT_STOP_DISTANCE_CM))
+        odo_matches_inferred = (abs(inferred_ld - self.lane_distance)
+                                <= cfg.WALL_EXPECT_TOL_CM)
+        inferred_standoff = (end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+                             and inferred_near_far_end
+                             and odo_matches_inferred)
+        near_far_end = (self.lane_distance + end_dist
+                        >= cfg.ARENA_LENGTH_CM - cfg.WALL_EXPECT_TOL_CM)
+        odo_still_near_start = (self.lane_distance
+                                < cfg.ARENA_LENGTH_CM * 0.35)
+        contact_hold = (end_dist <= contact_close
+                        and (near_far_end or odo_still_near_start))
+        end_hold = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
+                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+                    and heading_ok
+                    and not self._at_pit()
+                    and (wall_plausible or standoff_aligned or contact_hold
+                         or inferred_standoff))
+        self._wall_persist = self._wall_persist + 1 if end_hold else 0
+        wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
+        odo_backstop = (self.pos_source != "WALL"
+                        and self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM)
+                        and heading_ok)
+        if wall_trigger:
+            if wall_plausible or standoff_aligned or inferred_standoff:
+                trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
+            elif contact_hold:
+                trigger = (f"wall contact {end_dist:.0f}cm "
+                           f"(x{end_agree} agree, odometry lag)")
+            else:
+                trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
+        elif odo_backstop:
+            trigger = "odometry backstop (no wall seen)"
+        else:
+            trigger = ""
+        return wall_trigger, odo_backstop, end_dist, end_agree, trigger
+
+    def _reanchor_lane_from_wall(self, end_dist):
+        cfg = self.cfg
+        self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
+                                          cfg.ARENA_LENGTH_CM))
+        forward = math.cos(math.radians(self.target_heading)) >= 0.0
+        self.y = (cfg.START_Y_CM + self.lane_distance if forward
+                  else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
+
+    def _at_right_edge(self, readings):
+        cfg = self.cfg
+        if self.x + cfg.LANE_WIDTH_CM >= cfg.ARENA_WIDTH_CM - cfg.RIGHT_EDGE_MARGIN_CM:
+            return True
+        if readings:
+            d = readings.get("front_right", INF)
+            if d != INF and d <= cfg.RIGHT_WALL_STOP_CM:
+                return True
+        return False
 
     def complete_turn(self):
         """Call after main.py finishes the blocking U-turn maneuver.
@@ -349,10 +477,11 @@ class NavigationController:
 
     def pose_str(self):
         wall = "--" if self.front_wall_cm == INF else f"{self.front_wall_cm:5.1f}"
+        phase = "" if self.phase is None else f" ph={self.phase.name}"
         return (f"pos=({self.x:6.1f},{self.y:6.1f}) hdg={self.heading_rel:6.1f} "
                 f"tgt={self.target_heading:6.1f} lane#{self._lane_index} "
                 f"ld={self.lane_distance:5.1f} y_src={self.pos_source:6s} "
-                f"wall={wall}(x{self.front_agree})")
+                f"wall={wall}(x{self.front_agree}){phase}")
 
     # -- internals ----------------------------------------------------------
 

@@ -20,7 +20,7 @@ import config
 from actuators import Disposer, FrontServo
 from log import Logger
 from motors import MotorDriver
-from navigation import NavigationController, Action, Mode, angle_diff
+from navigation import NavigationController, Action, Mode, Phase, angle_diff
 
 
 def _spin_timed(logger, motors, cfg, direction):
@@ -316,6 +316,32 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
     motors.stop(logger)
 
 
+def _approach_pit(logger, motors, cfg, imu, nav, disposer, sensors, period):
+    """From the start wall: drive along it to pit x, face the pit, dump."""
+    print("[pit] along start wall -> centre -> dump")
+
+    if nav.x > cfg.PIT_X_CM + 5.0:
+        along = -90.0
+        dist = nav.x - cfg.PIT_X_CM
+    else:
+        along = 90.0
+        dist = cfg.PIT_X_CM - nav.x
+
+    _spin_to_heading(logger, motors, cfg, imu, nav, along)
+    nav.target_heading = along
+    if dist > 5.0:
+        print(f"[pit] drive {dist:.0f} cm along wall to pit x")
+        _drive_distance(logger, motors, cfg, dist, cfg.SLOW_SPEED)
+    nav.set_pose(x=cfg.PIT_X_CM, y=cfg.FRONT_STOP_DISTANCE_CM, target_heading=along)
+
+    _spin_to_heading(logger, motors, cfg, imu, nav, 0.0)
+    nav.target_heading = 0.0
+    _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
+    nav.set_pose(x=cfg.PIT_X_CM, y=cfg.FRONT_STOP_DISTANCE_CM, target_heading=0.0)
+    nav._done = True
+    print("[pit] dump complete -- run finished.")
+
+
 def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period):
     """After the sweep: go back to the pit (mid start wall) and dump the remainder.
 
@@ -396,6 +422,22 @@ def run_drive_test(logger, motors, cfg, imu=None):
     motors.stop(logger)
 
 
+def _sync_shovel(front_servo, nav, last_phase):
+    """Move the scoop when the hill phase changes."""
+    if front_servo is None or not getattr(nav.cfg, "HILL_MODE", False):
+        return last_phase
+    phase = nav.phase
+    if phase is last_phase:
+        return last_phase
+    if phase is Phase.CLIMB_FIRST:
+        front_servo.climb()
+    elif phase is Phase.SWEEP:
+        front_servo.lower()
+    elif phase in (Phase.CLIMB_LAST, Phase.DESCEND):
+        front_servo.climb()
+    return phase
+
+
 def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=False):
     """IMU + odometry navigation loop with block disposal at the pit."""
     # Imported here so the drive-test mode never needs the sensor stack.
@@ -409,11 +451,18 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     # Zero the heading on the current facing so lane targets are start-relative.
     nav.set_origin(imu.yaw() if imu is not None else None)
 
+    last_phase = None
+    if front_servo is not None and getattr(cfg, "HILL_MODE", False):
+        last_phase = Phase.CLIMB_FIRST
+
     turn_mode = "IMU heading" if (imu is not None and imu.available
                                   and cfg.USE_IMU_TURN) else f"timed {cfg.TURN_TIME_S}s"
     drive_mode = "IMU heading-hold"
     print("=" * 78)
-    print("USE_SENSORS = True -> IMU + wall-referenced navigation with disposal")
+    hill = getattr(cfg, "HILL_MODE", False)
+    mode_label = ("hill: climb -> sweep end -> descend -> pit"
+                  if hill else "IMU + wall-referenced navigation with disposal")
+    print(f"USE_SENSORS = True -> {mode_label}")
     print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm, "
           f"{cfg.NUM_LANES} lanes x {cfg.LANE_WIDTH_CM:.0f} cm (stop when all swept)")
     print(f"  start pose    : ({cfg.START_X_CM:.0f}, {cfg.START_Y_CM:.0f}) cm, heading 0")
@@ -442,6 +491,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             readings = sensors.read_all()
             yaw = imu.yaw() if imu is not None else None
             cmd = nav.decide(readings, yaw, dt)
+            last_phase = _sync_shovel(front_servo, nav, last_phase)
             _log_status(logger, nav, readings, yaw, cmd)
 
             if babysit:
@@ -456,10 +506,8 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             if cmd.action is not Action.FORWARD:
                 last_t = time.monotonic()   # dispose / U-turn blocked -- drop stale dt
 
-            # Periodically raise the front scoop while cruising. The timer counts
-            # only FORWARD time, so it pauses through the (blocking) U-turns and
-            # disposal maneuvers rather than firing right after one.
-            if cmd.action is Action.FORWARD and front_servo is not None:
+            # Scoop only in the collection zone (hill mode) or on interval (legacy).
+            if cmd.action is Action.FORWARD and front_servo is not None and nav.collecting:
                 drive_elapsed += dt
                 if drive_elapsed >= cfg.FRONT_SERVO_INTERVAL_S:
                     motors.stop(logger)  # HACK: this probably breaks more than it fixes
@@ -467,7 +515,11 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
                     drive_elapsed = 0.0
                     last_t = time.monotonic()   # scoop blocks -- don't bridge that gap
 
-            if nav.mode is Mode.DONE:
+            if nav.phase is Phase.TO_PIT:
+                print("[nav] start wall reached -> pit approach")
+                _approach_pit(logger, motors, cfg, imu, nav, disposer, sensors, period)
+                break
+            if nav.mode is Mode.DONE and not hill:
                 print(f"[nav] coverage complete: swept all {cfg.NUM_LANES} lanes")
                 _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period)
                 break
@@ -498,7 +550,7 @@ def main():
         from imu import IMU
         imu = IMU(logger, cfg)
     try:
-        front_servo.startup()
+        front_servo.startup() if not cfg.HILL_MODE else front_servo.climb()
         if args.shell:
             breakpoint()
         elif cfg.USE_SENSORS:
