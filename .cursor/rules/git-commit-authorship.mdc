@@ -1,0 +1,15 @@
+---
+description: Git commits must list only the user as author — no AI attribution
+alwaysApply: true
+---
+
+# Git Commit Authorship
+
+When creating commits for this repository:
+
+- **Only the user is the author.** Do not add AI, Cursor, or assistant attribution in any form.
+- **Never add** `Co-authored-by`, `Signed-off-by`, or similar trailers naming an AI or assistant.
+- **Never set** `--author` to an AI identity, and **never change** git user.name or user.email.
+- **Commit messages** must not mention that code was written or committed by an AI, Cursor, or an assistant.
+
+Write commit messages as if the user authored the changes themselves.

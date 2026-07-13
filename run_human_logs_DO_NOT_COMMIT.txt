@@ -1,0 +1,26 @@
+arena is sized 150cm (along the lanes) and 160cm (the other dimension)
+rover is placed in the top right corner, facing the left side
+0:08 - ./run.sh main.py is ran inside the terminal
+0:11 - rover starts going forwards
+0:13 - rover starts steering to the left (still moving forwards)
+0:14 - pivots to the left around front left wheel. at this point has turned to the left 90 degrees, perpendicular to the lane. there is some space between the rover and the wall
+0:15 - keeps steering to the left, back wheels sweep the wall and has turned 180 degrees at this point, offset to the left relative to the starting position, moving back towards the starting wall
+0:15 - later overturns and is now slightly facing back to the starting position. still moving towards the starting wall
+0:16 - pivots around the back left wheel, oversteers to the right now, overcorrecting for the overcorrection (maybe)
+0:16 - oversteers to the left, effectively the movement towards the starting wall resembles a crooked sine wave (unlike the previous move to the opposite wall, which was straight)
+0:16 - oversteers to the right again, still moving forward overall. gets close to the opposite wall
+0:17 - starts steering to the left near the starting wall
+0:18 - starts steering to the right, getting very close to the opposite wall. turn is interrupted kinda
+0:19 - enters uturn mode, turns ~90 degrees to the left in place
+0:22 - moves forward
+0:25 - reaches approximately opposite end of arena. stops and turns ~90 degrees to the right in place
+0:29 - starts moving forward, steering to the left, possibly exiting the arena. NOTE: there is no wall on this side
+0:30 - steers and oversteers to the right
+0:31 - steers and oversteers to the left
+0:31 - steers and oversteers to the right near opposite edge of arena
+0:33 - it kept turning to the right. at this point it had turned 90 degrees. at this point the logs are printing "[front-servo] -> 90deg (placeholder -- no servo yet)" (before) and now it prints the 0deg, but the rover is still moving
+0:34 - it is at the bottom wall, facing the top wall and turning to the left in place (in TURNING mode)
+0:37 - now it has turned 90 degrees to the left, facing the right wall. it starts moving forwards towards it (but it is stuck against the wall really) - lane shift
+0:38 - it is turning 90 degrees to the left in place, against the opposite end of the arena. although there isn't a bottom wall throughout the whole bottom edge of the arena, there is an obstacle near the bottom left corner, right at the edge of the arena. the rover is right up against it
+0:44 - a disposing message is printed. the rover is driving forwards and running into the obstacle shaking left and right
+0:47 - the script is terminated with ^C
