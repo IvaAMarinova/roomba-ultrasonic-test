@@ -12,12 +12,14 @@ Usage:
     python teleop.py                 # mock mode (prints to terminal)
     python teleop.py --hardware      # drives real motors via GPIO
 
-Structured JSON lines (event teleop / teleop_tick / teleop_snapshot) go to stdout.
-Press Space to stop and capture a snapshot: sensor distances, IMU yaw, and a
-camera JPEG saved under teleop_recordings/ (or --record-dir).
+Structured JSON lines go to stdout and teleop_recordings/<session>.jsonl.
+Each line has monotonic t (seconds), pose (x/y/heading), all ultrasonic
+readings, IMU yaw, and derived wall summaries. Space or --snapshot-interval
+captures camera JPEGs keyed by snapshot_id.
 """
 
 import argparse
+import math
 import os
 import threading
 import time
@@ -113,6 +115,126 @@ def _run_async(target, *args, **kwargs) -> None:
     threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
 
 
+class _ArenaRecorder:
+    """Dead-reckoning pose + monotonic session stamps for arena mapping logs."""
+
+    def __init__(self, cfg, session_id: str) -> None:
+        from navigation import angle_diff
+
+        self._angle_diff = angle_diff
+        self.cfg = cfg
+        self.session_id = session_id
+        self.t0 = time.monotonic()
+        self.tick = 0
+        self.x = cfg.START_X_CM
+        self.y = cfg.START_Y_CM
+        self.heading = 0.0
+        self._yaw0: float | None = None
+        self._last_t = self.t0
+
+    def set_origin(self, yaw_abs: float | None) -> None:
+        if yaw_abs is not None:
+            self._yaw0 = yaw_abs
+            self.heading = 0.0
+
+    def stamp(self) -> dict:
+        return {
+            "session": self.session_id,
+            "t": round(time.monotonic() - self.t0, 4),
+        }
+
+    def next_tick(self) -> dict:
+        self.tick += 1
+        return {**self.stamp(), "tick": self.tick}
+
+    def update_motion(self, direction: str | None, speed: float, yaw_abs: float | None) -> float:
+        now = time.monotonic()
+        dt = now - self._last_t
+        self._last_t = now
+        max_dt = 2.0 / self.cfg.CONTROL_LOOP_HZ if self.cfg.CONTROL_LOOP_HZ > 0 else 0.1
+        if dt > max_dt:
+            dt = max_dt
+
+        if yaw_abs is not None and self._yaw0 is not None:
+            self.heading = self._angle_diff(yaw_abs, self._yaw0)
+
+        if direction in ("forward", "backward") and speed > 0 and dt > 0:
+            sign = 1.0 if direction == "forward" else -1.0
+            dist = (
+                self.cfg.DRIVE_CM_PER_S
+                * (speed / self.cfg.DRIVE_SPEED)
+                * dt
+                * sign
+            )
+            rad = math.radians(self.heading)
+            self.x += dist * math.sin(rad)
+            self.y += dist * math.cos(rad)
+        return dt
+
+    def pose_fields(self, yaw_abs: float | None = None) -> dict:
+        fields = {"x": round(self.x, 2), "y": round(self.y, 2), "heading": round(self.heading, 2)}
+        if yaw_abs is not None:
+            fields["yaw"] = yaw_abs
+        return fields
+
+
+def _session_metadata(cfg, session_id: str, **extra) -> dict:
+    return {
+        "session": session_id,
+        "arena_width_cm": cfg.ARENA_WIDTH_CM,
+        "arena_length_cm": cfg.ARENA_LENGTH_CM,
+        "pit_x_cm": cfg.PIT_X_CM,
+        "pit_y_cm": cfg.PIT_Y_CM,
+        "start_x_cm": cfg.START_X_CM,
+        "start_y_cm": cfg.START_Y_CM,
+        "robot_width_cm": cfg.ROBOT_WIDTH_CM,
+        "lane_width_cm": cfg.LANE_WIDTH_CM,
+        "drive_cm_per_s": cfg.DRIVE_CM_PER_S,
+        "drive_speed": cfg.DRIVE_SPEED,
+        "front_sensors": list(cfg.FRONT_SENSORS),
+        "back_sensors": list(cfg.BACK_SENSORS),
+        "sensors": {
+            name: {"trig": spec["trig"], "echo": spec["echo"], "enabled": spec.get("enabled", True)}
+            for name, spec in cfg.SENSORS.items()
+        },
+        **extra,
+    }
+
+
+def _front_wall_summary(cfg, readings: dict[str, float]) -> dict:
+    dists = []
+    for name in cfg.FRONT_SENSORS:
+        spec = cfg.SENSORS.get(name, {})
+        if not spec.get("enabled", True):
+            continue
+        dist = readings.get(name)
+        if dist is not None and math.isfinite(dist):
+            dists.append(dist)
+    if not dists:
+        return {"front_wall_cm": None, "front_agree": 0}
+    median = sorted(dists)[len(dists) // 2]
+    tol = cfg.FRONT_AGREE_TOL_CM
+    agree = sum(1 for d in dists if abs(d - median) <= tol)
+    return {"front_wall_cm": round(median, 2), "front_agree": agree}
+
+
+def _back_wall_summary(cfg, readings: dict[str, float]) -> dict:
+    dists = []
+    for name in cfg.BACK_SENSORS:
+        spec = cfg.SENSORS.get(name, {})
+        if not spec.get("enabled", True):
+            continue
+        dist = readings.get(name)
+        if dist is not None and math.isfinite(dist):
+            dists.append(dist)
+    if not dists:
+        return {"back_wall_cm": None, "back_agree": 0}
+    median = sorted(dists)[len(dists) // 2]
+    tol = cfg.FRONT_AGREE_TOL_CM
+    agree = sum(1 for d in dists if abs(d - median) <= tol)
+    return {"back_wall_cm": round(median, 2), "back_agree": agree}
+
+
 class TeleopApp:
     KEYS_FORWARD = {"w", "Up"}
     KEYS_BACKWARD = {"s", "Down"}
@@ -123,7 +245,9 @@ class TeleopApp:
         self,
         robot,
         *,
+        cfg,
         logger,
+        recorder: _ArenaRecorder,
         front_servo=None,
         disposer=None,
         sensors=None,
@@ -131,9 +255,12 @@ class TeleopApp:
         camera=None,
         record_dir: str = "teleop_recordings",
         tick_ms: int = 50,
+        snapshot_interval_s: float = 0.0,
     ) -> None:
+        self._cfg = cfg
         self._robot = robot
         self._logger = logger
+        self._recorder = recorder
         self._front_servo = front_servo
         self._disposer = disposer
         self._sensors = sensors
@@ -141,6 +268,8 @@ class TeleopApp:
         self._camera = camera
         self._record_dir = record_dir
         self._tick_ms = tick_ms
+        self._snapshot_interval_s = snapshot_interval_s
+        self._last_auto_snapshot_t = 0.0
         self._speed: float = 0.5
         self._direction: str | None = None
         self._held: set[str] = set()
@@ -157,6 +286,21 @@ class TeleopApp:
         self._root.bind("<KeyRelease>", self._on_key_release)
         self._root.protocol("WM_DELETE_WINDOW", self._quit)
         self._root.after(self._tick_ms, self._record_tick)
+
+    def _log(self, event: str, **fields) -> None:
+        fields.update(self._recorder.stamp())
+        yaw = self._imu.yaw() if self._imu is not None else None
+        fields.update(self._recorder.pose_fields(yaw))
+        self._logger.log(event, **fields)
+
+    def _sensor_fields(self) -> dict:
+        if self._sensors is None:
+            return {}
+        readings = self._sensors.read_all()
+        fields = dict(readings)
+        fields.update(_front_wall_summary(self._cfg, readings))
+        fields.update(_back_wall_summary(self._cfg, readings))
+        return fields
 
     def _build_ui(self) -> None:
         style = {"bg": "#1e1e2e", "fg": "#cdd6f4"}
@@ -331,7 +475,13 @@ class TeleopApp:
             self._root.after(0, lambda: self._set_servo_status(f"servos: {label}..."))
             try:
                 fn()
-                self._logger.log("teleop", action=action)
+                yaw = self._imu.yaw() if self._imu is not None else None
+                self._logger.log(
+                    "teleop",
+                    action=action,
+                    **self._recorder.stamp(),
+                    **self._recorder.pose_fields(yaw),
+                )
             finally:
                 self._servo_busy = False
                 self._root.after(0, lambda: self._set_servo_status("servos: ready"))
@@ -358,7 +508,7 @@ class TeleopApp:
             self._robot.stop()
             self._direction = None
             self._root.after(0, lambda: self._status_var.set("STOPPED"))
-            self._logger.log("teleop", action="stop")
+            self._log("teleop", action="stop")
             self._front_servo.lift_cycle()
 
         self._run_servo_action("scoop cycle", "front_cycle", cycle)
@@ -447,48 +597,60 @@ class TeleopApp:
         self._direction = direction
         label = direction.upper()
         self._status_var.set(f"{label}  ({self._speed:.2f})")
-        self._logger.log("teleop", action=direction, speed=self._speed)
+        self._log("teleop", action=direction, speed=self._speed)
 
     def _stop_motors(self) -> None:
         self._robot.stop()
         self._direction = None
         self._status_var.set("STOPPED")
-        self._logger.log("teleop", action="stop")
+        self._log("teleop", action="stop")
 
     def _on_speed_change(self, _value: str) -> None:
         self._speed = self._speed_var.get()
         if self._direction is not None:
             getattr(self._robot, self._direction)(self._speed)
             self._status_var.set(f"{self._direction.upper()}  ({self._speed:.2f})")
-            self._logger.log("teleop", action=self._direction, speed=self._speed)
+            self._log("teleop", action=self._direction, speed=self._speed)
 
     def _record_tick(self) -> None:
         if not self._root.winfo_exists():
             return
+        yaw = self._imu.yaw() if self._imu is not None else None
+        dt = self._recorder.update_motion(self._direction, self._speed, yaw)
         fields: dict = {
+            **self._recorder.next_tick(),
+            "dt": round(dt, 4),
             "direction": self._direction or "stop",
             "speed": self._speed,
+            **self._recorder.pose_fields(yaw),
         }
-        if self._imu is not None:
-            fields["yaw"] = self._imu.yaw()
-        if self._sensors is not None:
-            fields.update(self._sensors.read_all())
+        fields.update(self._sensor_fields())
+        if self._front_servo is not None:
+            fields["front_servo_pulse_ms"] = round(self._front_servo.pulse_ms, 3)
+        if self._disposer is not None:
+            fields["back_servo_pulse_ms"] = round(self._disposer._door.pulse_ms, 3)
         self._logger.log("teleop_tick", **fields)
+
+        if self._snapshot_interval_s > 0:
+            elapsed = self._recorder.stamp()["t"]
+            if elapsed - self._last_auto_snapshot_t >= self._snapshot_interval_s:
+                self._last_auto_snapshot_t = elapsed
+                _run_async(lambda: self._capture_snapshot(trigger="interval", quiet=True))
+
         self._root.after(self._tick_ms, self._record_tick)
 
-    def _capture_snapshot(self) -> None:
+    def _capture_snapshot(self, *, trigger: str = "manual", quiet: bool = False) -> None:
         snapshot_id = time.strftime("%Y%m%d-%H%M%S")
-        fields: dict = {"snapshot_id": snapshot_id}
-
-        readings: dict[str, float] = {}
-        if self._sensors is not None:
-            readings = self._sensors.read_all()
-            fields.update(readings)
-
-        yaw = None
-        if self._imu is not None:
-            yaw = self._imu.yaw()
-            fields["yaw"] = yaw
+        yaw = self._imu.yaw() if self._imu is not None else None
+        fields: dict = {
+            **self._recorder.stamp(),
+            "snapshot_id": snapshot_id,
+            "trigger": trigger,
+            "direction": self._direction or "stop",
+            "speed": self._speed,
+            **self._recorder.pose_fields(yaw),
+        }
+        fields.update(self._sensor_fields())
 
         image_path = os.path.join(self._record_dir, f"{snapshot_id}.jpg")
         if self._camera is not None and self._camera.available:
@@ -503,12 +665,18 @@ class TeleopApp:
 
         self._logger.log("teleop_snapshot", **fields)
 
-        print(f"\n=== snapshot {snapshot_id} ===")
+        if quiet:
+            return
+
+        readings = self._sensors.read_all() if self._sensors is not None else {}
+        print(f"\n=== snapshot {snapshot_id} ({trigger}) ===")
+        print(f"           pos: ({fields.get('x')}, {fields.get('y')}) cm  "
+              f"hdg={fields.get('heading')}°  t={fields.get('t')}s")
         if self._sensors is not None:
             for name in sorted(readings):
                 enabled = self._sensors.is_enabled(name)
                 print(f"  {name:>14}: {_format_distance(readings[name], enabled)}")
-        elif not readings:
+        else:
             print("        sensors: (disabled)")
 
         if self._imu is not None:
@@ -531,7 +699,7 @@ class TeleopApp:
 
     def _quit(self) -> None:
         self._robot.stop()
-        self._logger.log("teleop", phase="end")
+        self._log("teleop", phase="end")
         if self._front_servo is not None:
             self._front_servo.cleanup()
         if self._disposer is not None:
@@ -567,7 +735,14 @@ def main() -> None:
     parser.add_argument(
         "--record-dir",
         default="teleop_recordings",
-        help="Directory for Space-triggered camera JPEGs (default: teleop_recordings)",
+        help="Directory for session JSONL, camera JPEGs (default: teleop_recordings)",
+    )
+    parser.add_argument(
+        "--snapshot-interval",
+        type=float,
+        default=30.0,
+        metavar="SEC",
+        help="Auto snapshot+camera every SEC seconds (0=Space only, default: 30)",
     )
     args = parser.parse_args()
 
@@ -577,66 +752,92 @@ def main() -> None:
     import config
     from log import Logger
 
-    logger = Logger(format=args.log_format)
-    tick_ms = max(1, int(1000.0 / config.CONTROL_LOOP_HZ))
+    session_id = time.strftime("%Y%m%d-%H%M%S")
     record_dir = os.path.abspath(args.record_dir)
     os.makedirs(record_dir, exist_ok=True)
+    log_path = os.path.join(record_dir, f"{session_id}.jsonl")
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        logger = Logger(format=args.log_format, log_file=log_file)
+        tick_ms = max(1, int(1000.0 / config.CONTROL_LOOP_HZ))
+        recorder = _ArenaRecorder(config, session_id)
 
-    sensors = None
-    imu = None
-    if not args.no_sensors:
-        from sensors import UltrasonicArray
-        from imu import IMU
+        sensors = None
+        imu = None
+        if not args.no_sensors:
+            from sensors import UltrasonicArray
+            from imu import IMU
 
-        sensors = UltrasonicArray(config)
-        imu = IMU(logger, config)
+            sensors = UltrasonicArray(config)
+            imu = IMU(logger, config)
+            recorder.set_origin(imu.yaw() if imu is not None else None)
 
-    camera = None
-    if not args.no_camera:
-        from camera import Camera
+        camera = None
+        if not args.no_camera:
+            from camera import Camera
 
-        camera = Camera(logger, config)
+            camera = Camera(logger, config)
 
-    from actuators import Disposer, FrontServo
+        from actuators import Disposer, FrontServo
 
-    front_servo = FrontServo(config)
-    disposer = Disposer(config)
-    if args.hardware:
-        print(
-            f"[back-servo] holding closed at {config.BACK_SERVO_CLOSED_PULSE_MS:.3f} ms "
-            f"(GPIO {config.BACK_SERVO_PIN})"
+        front_servo = FrontServo(config)
+        disposer = Disposer(config)
+        if args.hardware:
+            print(
+                f"[back-servo] holding closed at {config.BACK_SERVO_CLOSED_PULSE_MS:.3f} ms "
+                f"(GPIO {config.BACK_SERVO_PIN})"
+            )
+            front_servo.startup()
+
+        if args.hardware:
+            print("Starting teleop in HARDWARE mode")
+            robot = _create_hardware_robot(config)
+        else:
+            print("Starting teleop in MOCK mode (use --hardware for real motors)")
+            robot = _create_mock_robot()
+
+        logger.log(
+            "teleop_session",
+            **_session_metadata(
+                config,
+                session_id,
+                log_file=log_path,
+                record_dir=record_dir,
+                hardware=args.hardware,
+                sensors=sensors is not None and sensors.using_hardware,
+                imu=imu is not None and imu.available,
+                camera=camera is not None and camera.available,
+                snapshot_interval_s=args.snapshot_interval,
+                control_loop_hz=config.CONTROL_LOOP_HZ,
+            ),
         )
-        front_servo.startup()
+        logger.log(
+            "teleop",
+            phase="start",
+            session=session_id,
+            hardware=args.hardware,
+            sensors=sensors is not None and sensors.using_hardware,
+            imu=imu is not None and imu.available,
+            camera=camera is not None and camera.available,
+            record_dir=record_dir,
+            log_file=log_path,
+        )
+        print(f"Session {session_id} -> {log_path}")
 
-    if args.hardware:
-        print("Starting teleop in HARDWARE mode")
-        robot = _create_hardware_robot(config)
-    else:
-        print("Starting teleop in MOCK mode (use --hardware for real motors)")
-        robot = _create_mock_robot()
-
-    logger.log(
-        "teleop",
-        phase="start",
-        hardware=args.hardware,
-        sensors=sensors is not None and sensors.using_hardware,
-        imu=imu is not None and imu.available,
-        camera=camera is not None and camera.available,
-        record_dir=record_dir,
-    )
-
-    app = TeleopApp(
-        robot,
-        logger=logger,
-        front_servo=front_servo,
-        disposer=disposer,
-        sensors=sensors,
-        imu=imu,
-        camera=camera,
-        record_dir=record_dir,
-        tick_ms=tick_ms,
-    )
-    app.run()
+        app = TeleopApp(
+            robot,
+            cfg=config,
+            logger=logger,
+            recorder=recorder,
+            front_servo=front_servo,
+            disposer=disposer,
+            sensors=sensors,
+            imu=imu,
+            camera=camera,
+            record_dir=record_dir,
+            tick_ms=tick_ms,
+            snapshot_interval_s=max(0.0, args.snapshot_interval),
+        )
+        app.run()
 
 
 if __name__ == "__main__":

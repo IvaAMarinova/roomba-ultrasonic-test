@@ -7,13 +7,15 @@ text-searched.
 """
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import cycle
+from typing import IO, Optional
 
 
 @dataclass
 class Logger:
     format: str
+    log_file: Optional[IO[str]] = field(default=None, repr=False)
 
     def log(self, event: str, **fields):
         rec = {"event": event}
@@ -23,9 +25,16 @@ class Logger:
                 v = None
             rec[k] = v
         if self.format == 'json':
-            print(json.dumps(rec, default=str), flush=True)
+            line = json.dumps(rec, default=str)
+            print(line, flush=True)
+            if self.log_file is not None:
+                self.log_file.write(line + "\n")
+                self.log_file.flush()
         else:
             _readable_print(rec)
+            if self.log_file is not None:
+                self.log_file.write(json.dumps(rec, default=str) + "\n")
+                self.log_file.flush()
 
 
 _colors = {
