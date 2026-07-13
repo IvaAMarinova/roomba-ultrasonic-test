@@ -289,6 +289,14 @@ MOTOR_PWM_HZ = 1000              # PWM frequency on the speed pins
 MOTOR_DEADZONE = 0.05            # |side command| below this counts as stop
 
 # ---------------------------------------------------------------------------
+# UVC camera (LG AN-VC500 or similar; teleop snapshots via ffmpeg + V4L2).
+# ---------------------------------------------------------------------------
+CAMERA_DEVICE = "/dev/video0"
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
+CAMERA_INPUT_FORMAT = "yuyv422"
+
+# ---------------------------------------------------------------------------
 # Control loop.
 # ---------------------------------------------------------------------------
 CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
