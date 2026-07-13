@@ -4,9 +4,9 @@ import math
 # Arena geometry (known and fixed for the competition).
 # ---------------------------------------------------------------------------
 # ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
-ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
-ARENA_WIDTH_CM = 120.0        # across the lanes (the car steps sideways here)
-#ARENA_LENGTH_CM = 60.0       # along each lane (the long axis the car runs)
+# ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
+ARENA_WIDTH_CM = 150.0        # across the lanes (the car steps sideways here)
+ARENA_LENGTH_CM = 212.0       # along each lane (the long axis the car runs)
 
 ROBOT_WIDTH_CM = 50.0         # physical width of the car
 
@@ -14,7 +14,7 @@ ROBOT_WIDTH_CM = 50.0         # physical width of the car
 # with no gaps this must be <= ROBOT_WIDTH_CM; a little less gives overlap.
 # 210 / 45 ~= 5 lanes. Bigger = wider shift (faster, but leaves unswept strips
 # once it exceeds the car width).
-LANE_WIDTH_CM = 15.0
+LANE_WIDTH_CM = 35.0
 
 # How many lanes make up a full sweep of the arena = how wide the arena is
 # divided by how far we step each lane (rounded UP so the far edge is covered).
@@ -90,7 +90,6 @@ COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes fr
 # ---------------------------------------------------------------------------
 FRONT_SERVO_PIN = 18                # BCM pin for the front servo PWM signal
 FRONT_SERVO_DOWN_PULSE_MS = 0.780   # resting / collecting pulse width
-#FRONT_SERVO_DOWN_PULSE_MS = 1.130    # resting / collecting pulse width
 FRONT_SERVO_UP_PULSE_MS = 1.840     # raised pulse width
 FRONT_SERVO_MOVE_S = 0.80           # seconds for full down<->up travel (0 = instant jump)
 FRONT_SERVO_RAMP_STEP_S = 0.02      # update interval while ramping
@@ -138,16 +137,16 @@ BACK_SERVO_RAMP_STEP_S = 0.02       # update interval while ramping
 SENSORS = {
     # Front -- ENABLED (primary position reference).
     "front_left":   {"trig": 6,  "echo": 5,  "enabled": True},   # left edge, outboard of bucket
-    #"front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
+    "front_center": {"trig": 27, "echo": 22, "enabled": True},   # centre
     "front_right":  {"trig": 23, "echo": 24, "enabled": True},   # right edge, outboard of bucket
     # Back -- future: reverse / disposal assistance.
     "back_left":    {"trig": 1,  "echo": 25, "enabled": True},   # back, left
-    #"back_right":   {"trig": 7,  "echo": 8,  "enabled": True},   # back, right
+    "back_right":   {"trig": 7,  "echo": 8,  "enabled": True},   # back, right
 }
 
 # Logical groupings used by the navigation logic.
-FRONT_SENSORS = ("front_left", "front_right")
-BACK_SENSORS = ("back_left")
+FRONT_SENSORS = ("front_left", "front_center", "front_right")
+BACK_SENSORS = ("back_left", "back_right")
 
 # ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
@@ -205,7 +204,7 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # ---------------------------------------------------------------------------
 # Motion parameters.
 # ---------------------------------------------------------------------------
-DRIVE_SPEED = 0.4                # nominal forward speed (0..1 duty)
+DRIVE_SPEED = 0.3                # nominal forward speed (0..1 duty)
 SLOW_SPEED = 0.2                 # forward speed when an obstacle is getting close
 TURN_SPEED = 0.1                 # in-place rotation speed
 
@@ -260,6 +259,9 @@ TURN_TIME_S = 4
 #     False -> IMU is never touched; ALL spins use the timed TURN_TIME_S spin.
 # ---------------------------------------------------------------------------
 USE_IMU_TURN = True              # True = IMU heading-feedback turns, False = timed (TURN_TIME_S)
+# Software I2C bus for the BNO086 (see /boot/firmware/config.txt i2c-gpio overlay).
+# Pi hardware I2C mishandles BNO08x clock stretching; bus 3 = /dev/i2c-3 on the car.
+IMU_I2C_BUS = 3
 TURN_ANGLE_DEG = 90.0            # target rotation for one end-of-lane spin
 IMU_TURN_TOLERANCE_DEG = 3.0     # stop this many deg early to allow for coast/momentum
 ORIENT_SKIP_DEG = 15.0           # skip dispose / return spins when already within this of target
@@ -290,6 +292,14 @@ MOTOR_PWM_HZ = 1000              # PWM frequency on the speed pins
 MOTOR_DEADZONE = 0.05            # |side command| below this counts as stop
 
 # ---------------------------------------------------------------------------
+# UVC camera (LG AN-VC500 or similar; teleop snapshots via ffmpeg + V4L2).
+# ---------------------------------------------------------------------------
+CAMERA_DEVICE = "/dev/video0"
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
+CAMERA_INPUT_FORMAT = "yuyv422"
+
+# ---------------------------------------------------------------------------
 # Control loop.
 # ---------------------------------------------------------------------------
 CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
@@ -301,7 +311,7 @@ CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
 #       H-bridges and turning on the real car (no sensors / dividers needed yet).
 #   USE_SENSORS = True  -> normal sensor-driven navigation.
 # ---------------------------------------------------------------------------
-USE_SENSORS = False
+USE_SENSORS = True
 
 # Open-loop maneuver script used when USE_SENSORS is False.
 # Each step is (action, seconds), where action is one of:
@@ -309,9 +319,9 @@ USE_SENSORS = False
 # Turn steps use TURN_TIME_S so they should be ~90 degrees once it's tuned.
 DRIVE_TEST_SEQUENCE = [
     ("forward", 2.0),
-    #("left",    TURN_TIME_S),
-    #("forward", 2.0),
-    #("right",   TURN_TIME_S),
-    #("forward", 2.0),
+    ("left",    TURN_TIME_S),
+    ("forward", 2.0),
+    ("right",   TURN_TIME_S),
+    ("forward", 2.0),
     ("stop",    1.0),
 ]
