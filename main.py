@@ -248,6 +248,7 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
             _spin_to_heading(logger, motors, cfg, imu, nav, target)
 
     door_thread = disposer.start_opening()
+    time.sleep(0.1)  # Need to back up first
     rev_s = _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, -cfg.DISPOSE_REVERSE_SPEED)
     disposer.join_opening(door_thread)
     logger.log("dispose", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)

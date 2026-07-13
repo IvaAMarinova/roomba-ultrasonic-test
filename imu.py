@@ -9,11 +9,10 @@ Mirrors motors.py's philosophy: if the IMU stack or hardware isn't present this
 runs in a disabled mode (``available == False``) and yaw() returns None, so the
 caller transparently falls back to the original timed turn.
 
-Driver note: adafruit_bno08x 1.3.3 chokes on some BNO086 packets the Pi's
-hardware I2C delivers corrupted (UNKNOWN report type / KeyError on report_id 0).
-This is usually clock-stretching on the Pi -- see Adafruit's guide and add
-``dtparam=i2c_arm_baudrate=400000`` to /boot/firmware/config.txt, or use
-software I2C (i2c-gpio overlay + adafruit-extended-bus).
+Driver note: the BNO086 clock-stretches aggressively; the Pi hardware I2C
+controller corrupts or wedges the bus. Use software I2C on the car:
+``dtparam=i2c_arm=off`` plus ``dtoverlay=i2c-gpio,...`` in /boot/firmware/config.txt
+and ``IMU_I2C_BUS`` in config.py (adafruit-extended-bus).
 
 We monkey-patch _handle_packet() to skip command-channel traffic and to drop
 corrupted/unknown sensor batches instead of crashing the turn loop. yaw() also
@@ -28,6 +27,7 @@ import traceback
 try:
     import board
     import busio
+    from adafruit_extended_bus import ExtendedI2C
     from adafruit_bno08x import (
         BNO_REPORT_ROTATION_VECTOR,
         BNO08X,
@@ -84,6 +84,7 @@ class IMU:
     def __init__(self, logger, cfg=None, dry_run=None):
         self.available = False
         self._bno = None
+        self._cfg = cfg
         if dry_run or (dry_run is None and not _HAS_IMU_LIBS):
             logger.log("imu", status="absent", fallback="timed turns")
             return
@@ -96,7 +97,11 @@ class IMU:
             self.available = False
 
     def _init_sensor(self, max_attempts=8):
-        i2c = busio.I2C(board.SCL, board.SDA)
+        bus_num = getattr(self._cfg, "IMU_I2C_BUS", None) if self._cfg is not None else None
+        if bus_num is not None:
+            i2c = ExtendedI2C(bus_num)
+        else:
+            i2c = busio.I2C(board.SCL, board.SDA)
         last_error = None
         for attempt in range(1, max_attempts + 1):
             try:

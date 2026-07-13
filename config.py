@@ -259,6 +259,9 @@ TURN_TIME_S = 4
 #     False -> IMU is never touched; ALL spins use the timed TURN_TIME_S spin.
 # ---------------------------------------------------------------------------
 USE_IMU_TURN = True              # True = IMU heading-feedback turns, False = timed (TURN_TIME_S)
+# Software I2C bus for the BNO086 (see /boot/firmware/config.txt i2c-gpio overlay).
+# Pi hardware I2C mishandles BNO08x clock stretching; bus 3 = /dev/i2c-3 on the car.
+IMU_I2C_BUS = 3
 TURN_ANGLE_DEG = 90.0            # target rotation for one end-of-lane spin
 IMU_TURN_TOLERANCE_DEG = 3.0     # stop this many deg early to allow for coast/momentum
 ORIENT_SKIP_DEG = 15.0           # skip dispose / return spins when already within this of target
