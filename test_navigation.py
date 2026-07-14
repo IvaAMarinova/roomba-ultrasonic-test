@@ -71,12 +71,12 @@ def test_on_heading_cruises_straight():
 def test_heading_right_of_target_trims_left():
     # Heading right of target -> steer left (negative trim).
     cmd = nav().decide(reading(), yaw=10.0, dt=0.0)
-    assert cmd.steer > 0   # positive steer = toward car's right; corrects leftward drift
+    assert cmd.steer < 0
 
 
 def test_heading_left_of_target_trims_right():
     cmd = nav().decide(reading(), yaw=-10.0, dt=0.0)
-    assert cmd.steer < 0
+    assert cmd.steer > 0
 
 
 def test_no_imu_drives_open_loop_straight():

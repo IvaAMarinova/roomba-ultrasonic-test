@@ -733,8 +733,7 @@ class NavigationController:
         cfg = self.cfg
         if not self._has_heading:
             return 0.0  # no IMU -> can't hold a heading; drive open-loop straight
-        # Positive steer = toward the car's right. If our heading is left of the
-        # target (target - heading > 0), steer right to come back.
+        # Positive steer = toward the car's right. Drifted right of target -> steer left.
         err = angle_diff(self.target_heading, self.heading_rel)
-        trim = -cfg.HEADING_HOLD_GAIN * err
+        trim = cfg.HEADING_HOLD_GAIN * err
         return max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, trim))
