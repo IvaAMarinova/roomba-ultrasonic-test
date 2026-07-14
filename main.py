@@ -281,8 +281,11 @@ def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label=
                heading=nav.heading_rel, x=nav.x, y=nav.y)
     print(f"[align] {label}: side sensors L={fl} R={fr} (heading={nav.heading_rel:.0f}°)")
 
-    print(f"[align] square to {align_hdg:.0f}° (perpendicular to launch heading)")
-    _spin_to_heading(logger, motors, cfg, imu, nav, align_hdg)
+    if getattr(cfg, "WALL_ALIGN_TEST_MODE", None) == "perpendicular":
+        print(f"[align] assuming already square to {align_hdg:.0f}° (skip spin)")
+    else:
+        print(f"[align] square to {align_hdg:.0f}° (perpendicular to launch heading)")
+        _spin_to_heading(logger, motors, cfg, imu, nav, align_hdg)
     nav.target_heading = align_hdg
     nav.complete_face_heading(align_hdg)
 
@@ -415,6 +418,40 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
         motors.drive(logger, cfg.SLOW_SPEED, steer)
         time.sleep(period)
     motors.stop(logger)
+
+
+def _run_align_test(logger, motors, cfg, imu, nav, sensors, period, mode):
+    """Blocking harness for WALL_ALIGN_TEST_MODE: skip the state machine and
+    exercise the pit-finding endgame from wherever the car was placed.
+
+    "perpendicular": the current facing counts as the align heading (already
+    square across the arena at the start wall) -- only the creep alignment runs.
+    "approach": the current facing counts as heading 180 (down, toward the start
+    wall) -- drive to the wall, turn 90 deg, then run the alignment.
+    """
+    if mode not in ("perpendicular", "approach"):
+        raise ValueError(f"WALL_ALIGN_TEST_MODE: unknown mode {mode!r}")
+    align_hdg, _, _, _ = _align_wall_params(cfg)
+    yaw = imu.yaw() if imu is not None else None
+
+    if mode == "approach":
+        nav.set_origin(None if yaw is None else yaw - 180.0)
+        nav.heading_rel = 180.0
+        nav.target_heading = 180.0
+        print("[align-test] approach: drive to the start wall, turn 90°, align")
+        _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period,
+                       target_heading=180.0)
+        nav.set_pose(y=cfg.FRONT_STOP_DISTANCE_CM, target_heading=180.0)
+    else:
+        nav.set_origin(None if yaw is None else yaw - align_hdg)
+        nav.heading_rel = align_hdg
+        nav.target_heading = align_hdg
+        print("[align-test] perpendicular: creep alignment only")
+
+    _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period,
+                          label="align-test")
+    motors.stop(logger)
+    print(f"[align-test] done (x={nav.x:.0f}, heading={nav.heading_rel:.0f}°)")
 
 
 def _approach_pit(logger, motors, cfg, imu, nav, disposer, sensors, period):
@@ -618,6 +655,16 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
 
     # Zero the heading on the current facing so lane targets are start-relative.
     nav.set_origin(imu.yaw() if imu is not None else None)
+
+    test_mode = getattr(cfg, "WALL_ALIGN_TEST_MODE", None)
+    if test_mode:
+        try:
+            _run_align_test(logger, motors, cfg, imu, nav, sensors, period,
+                            test_mode)
+        finally:
+            disposer.cleanup()
+            sensors.cleanup()
+        return
 
     last_phase = None
     if front_servo is not None and getattr(cfg, "HILL_MODE", False):
