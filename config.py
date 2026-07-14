@@ -385,10 +385,9 @@ USE_SENSORS = False
 #   "forward", "left", "right", "stop".
 # Turn steps use TURN_TIME_S so they should be ~90 degrees once it's tuned.
 DRIVE_TEST_SEQUENCE = [
-    ("forward", 2.0),
+    ("forward", 5.0),
     ("left",    TURN_TIME_S),
-    ("forward", 2.0),
-    ("right",   TURN_TIME_S),
-    ("forward", 2.0),
+    ("left",   TURN_TIME_S),
+    ("forward", 5.0),
     ("stop",    1.0),
 ]
