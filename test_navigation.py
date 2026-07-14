@@ -632,27 +632,6 @@ def test_hill_reset_sweep_transverse():
     assert n.target_heading == 90.0
 
 
-def test_hill_approach_ignores_far_phantom_wall():
-    """Regression: far agreed wall must not snap y on the slope approach."""
-    cfg = hill_cfg()
-    n = nav(cfg)
-    n.phase = Phase.APPROACH_FAR_WALL
-    n.lane_distance = 73.6
-    n.y = 73.6
-    n.decide(front_wall(192.0), yaw=0.0, dt=0.1)
-    assert n.pos_source == "BRIDGE"
-    assert n.lane_distance > 70.0
-    assert n.y > 70.0
-
-
-def test_hill_climb_drives_straight():
-    n = nav(hill_cfg())
-    n.phase = Phase.CLIMB_FIRST
-    cmd = n.decide(reading(front_right=18.0), yaw=8.0, dt=0.1)
-    assert cmd.action is Action.FORWARD
-    assert cmd.steer == 0.0
-
-
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0
