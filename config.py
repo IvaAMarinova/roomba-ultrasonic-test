@@ -222,7 +222,7 @@ FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
 WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
 WALL_PERSIST_TICKS = 1           # consecutive ticks the wall-stop must hold before turning
 WALL_HEADING_ALIGN_DEG = 45.0    # only fuse / stop on a front wall when square to the lane heading
-WALL_CONTACT_STOP_CM = 40.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
+WALL_CONTACT_STOP_CM = 45.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
                                  # 28 not 25: medians land ~25.5 at contact; 25.0 missed and delayed the turn
 
 # ---------------------------------------------------------------------------
