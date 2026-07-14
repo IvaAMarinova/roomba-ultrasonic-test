@@ -273,6 +273,7 @@ def _align_wall_params(cfg):
 def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label="wall"):
     """Face across the arena (perpendicular to launch), creep until side sensors agree."""
     align_hdg, tol, step_cm, max_creep = _align_wall_params(cfg)
+    bias = getattr(cfg, "WALL_CENTER_SENSOR_BIAS_CM", 0.0)
     cm_per_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED)
 
     readings = sensors.read_all()
@@ -293,22 +294,22 @@ def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label=
     while creeped < max_creep:
         readings = sensors.read_all()
         fl, fr = _pit_side_readings(readings)
-        diff = abs(fl - fr) if fl is not None and fr is not None else None
+        diff = (fl - fr - bias) if fl is not None and fr is not None else None
         logger.log("wall_align", step="sample", label=label, front_left=fl, front_right=fr,
                    diff=diff, heading=nav.heading_rel, x=nav.x)
         print(f"[align] L={fl} R={fr} diff={diff} x={nav.x:.0f}")
 
-        if fl is not None and fr is not None and abs(fl - fr) <= tol:
+        if diff is not None and abs(diff) <= tol:
             print(f"[align] centred (L={fl:.0f} R={fr:.0f} cm, x={nav.x:.0f})")
             logger.log("wall_align", step="centered", label=label, front_left=fl,
                        front_right=fr, x=nav.x)
             break
 
-        if fl is None or fr is None:
+        if diff is None:
             time.sleep(period)
             continue
 
-        along = 1.0 if fl < fr else -1.0
+        along = 1.0 if diff < 0 else -1.0
         creep = min(step_cm, max_creep - creeped)
         seconds = creep / cm_per_s if cm_per_s > 0 else 0.0
         logger.log("wall_align", step="creep", label=label,

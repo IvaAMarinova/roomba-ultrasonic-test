@@ -102,7 +102,11 @@ DISPOSE_HOLD_S = 2.0                # dwell with rear door open while balls fall
 # the side walls, then creep along x until they agree. Used at the far wall
 # before turning back and at the start wall before dumping.
 WALL_ALIGN_HEADING = 90.0           # start-relative: +x, perpendicular to launch heading
-WALL_CENTER_SENSOR_TOL_CM = 10.0    # |front_left - front_right| when centred
+WALL_CENTER_SENSOR_TOL_CM = 10.0    # |front_left - front_right - bias| when centred
+# Measured (front_left - front_right) with the car AT the true centre -- the two
+# sensors do not read equal there (mounting/beam asymmetry). Calibrated 2026-07-14:
+# L=71.6, R=101.7 at centre.
+WALL_CENTER_SENSOR_BIAS_CM = -30.1
 WALL_ALIGN_CREEP_CM = 4.0           # distance per balance correction step
 WALL_ALIGN_MAX_CREEP_CM = 80.0      # safety cap on total lateral search
 # Alignment test harness: None for normal runs. When set, the run skips the
