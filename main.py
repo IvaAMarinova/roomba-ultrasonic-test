@@ -596,10 +596,8 @@ def _sync_shovel(front_servo, nav, last_phase):
     phase = nav.phase
     if phase is last_phase:
         return last_phase
-    if phase is Phase.CLIMB_FIRST:
+    if phase in (Phase.CLIMB_FIRST, Phase.DESCEND, Phase.BENCHMARK_RETURN):
         front_servo.climb()
-    elif phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN, Phase.BENCHMARK_ALIGN_PIT):
-        front_servo.raise_up()
     elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
                    Phase.APPROACH_HILL_CENTER, Phase.BENCHMARK_OUT):
         front_servo.lower()

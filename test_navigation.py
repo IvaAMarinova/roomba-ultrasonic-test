@@ -733,9 +733,12 @@ def test_benchmark_collecting_on_flat():
     assert n.collecting
     n.phase = Phase.BENCHMARK_RETURN
     assert not n.collecting
-    assert n.wants_full_up_shovel
+    assert n.wants_climb_shovel
+    assert not n.wants_full_up_shovel
     n.phase = Phase.CLIMB_FIRST
     assert not n.collecting
+    assert n.wants_climb_shovel
+    n.phase = Phase.DESCEND
     assert n.wants_climb_shovel
 
 

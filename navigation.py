@@ -171,18 +171,16 @@ class NavigationController:
 
     @property
     def wants_climb_shovel(self):
-        """Intermediate scoop height for climbing the slope."""
+        """Intermediate scoop height for slope legs (FRONT_SERVO_CLIMB_PULSE_MS)."""
         if not getattr(self.cfg, "HILL_MODE", False):
             return False
-        return self.phase is Phase.CLIMB_FIRST
+        return self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND,
+                              Phase.BENCHMARK_RETURN)
 
     @property
     def wants_full_up_shovel(self):
-        """Scoop fully raised: descending and homeward return legs."""
-        if not getattr(self.cfg, "HILL_MODE", False):
-            return False
-        return self.phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN,
-                              Phase.BENCHMARK_ALIGN_PIT)
+        """Scoop fully raised when a hill phase needs maximum clearance."""
+        return False
 
     def note_blocking_maneuver(self):
         """Call after a blocking U-turn / dispose so the next tick does not odometry-bridge a long gap."""
