@@ -513,6 +513,8 @@ def test_faulty_run_lane1_pose_after_contact_turn():
 def hill_cfg(**overrides):
     base = dict(
         HILL_MODE=True,
+        HILL_CLIMB_X_CM=75.0,
+        DESCEND_CENTER_Y_CM=106.0,
         HILL_TOP_Y_CM=50.0,
         COLLECTION_START_Y_CM=100.0,
         ARENA_WIDTH_CM=150.0,
@@ -525,16 +527,25 @@ def hill_cfg(**overrides):
     return cfg_with(**base)
 
 
-def test_hill_climbs_then_sweeps():
+def test_hill_climbs_then_repositions():
     n = nav(hill_cfg())
     assert n.phase is Phase.CLIMB_FIRST
+    assert abs(n.x - hill_cfg().HILL_CLIMB_X_CM) < 1e-9
     n.lane_distance = 49.0
     cmd = n.decide(reading(), yaw=0.0, dt=0.5)
     assert cmd.action is Action.FORWARD
     assert "climb" in cmd.reason
     n.lane_distance = 51.0
     n.decide(reading(), yaw=0.0, dt=0.0)
-    assert n.phase is Phase.SWEEP
+    assert n.phase is Phase.REPOSITION_TO_LEFT
+
+
+def test_hill_reposition_to_left_stops():
+    n = nav(hill_cfg())
+    n.phase = Phase.REPOSITION_TO_LEFT
+    cmd = n.decide(reading(), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.STOP
+    assert "left wall" in cmd.reason
 
 
 def test_hill_collects_only_at_end():
@@ -546,7 +557,7 @@ def test_hill_collects_only_at_end():
     assert n.collecting
 
 
-def test_hill_right_edge_skips_uturn():
+def test_hill_right_edge_repositions_for_descend():
     cfg = hill_cfg()
     n = nav(cfg)
     n.phase = Phase.SWEEP
@@ -556,25 +567,45 @@ def test_hill_right_edge_skips_uturn():
     for _ in range(config.WALL_PERSIST_TICKS):
         cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                        yaw=0.0, dt=0.1)
-    assert cmd.action is Action.FORWARD
-    assert n.phase is Phase.CLIMB_LAST
+    assert cmd.action is Action.STOP
+    assert n.phase is Phase.REPOSITION_FOR_DESCEND
+
+
+def test_hill_reposition_for_descend_stops():
+    n = nav(hill_cfg())
+    n.phase = Phase.REPOSITION_FOR_DESCEND
+    cmd = n.decide(reading(), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.STOP
+    assert "descend" in cmd.reason
 
 
 def test_hill_descend_then_pit():
     cfg = hill_cfg()
     n = nav(cfg)
-    n.phase = Phase.CLIMB_LAST
-    n.target_heading = 0.0
-    n.lane_distance = cfg.ARENA_LENGTH_CM - 40.0
-    for _ in range(config.WALL_PERSIST_TICKS):
-        n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5), yaw=0.0, dt=0.1)
-    assert n.phase is Phase.DESCEND
-    assert n.target_heading == 180.0
+    n.phase = Phase.DESCEND
+    n.target_heading = 180.0
+    n.x = cfg.HILL_CLIMB_X_CM
+    n.y = cfg.DESCEND_CENTER_Y_CM
+    n.lane_distance = cfg.ARENA_LENGTH_CM - cfg.DESCEND_CENTER_Y_CM
+    cmd = n.decide(reading(), yaw=180.0, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert "descend" in cmd.reason
     n.y = 10.0
     n.lane_distance = cfg.ARENA_LENGTH_CM - 10.0
     cmd = n.decide(reading(), yaw=180.0, dt=0.0)
     assert n.phase is Phase.TO_PIT
     assert cmd.action is Action.STOP
+
+
+def test_hill_reset_sweep_from_left():
+    cfg = hill_cfg()
+    n = nav(cfg)
+    n._lane_index = 3
+    n.x = cfg.HILL_CLIMB_X_CM
+    n.reset_sweep_from_left()
+    assert n._lane_index == 0
+    assert n.x == cfg.HILL_CLIMB_X_CM
+    assert n._next_serpentine_turn.name == "RIGHT"
 
 
 def _run():

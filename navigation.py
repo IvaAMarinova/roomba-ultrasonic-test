@@ -64,8 +64,9 @@ class Mode(Enum):
 class Phase(Enum):
     """Macro stages for HILL_MODE (slope -> sweep -> descend -> pit)."""
     CLIMB_FIRST = auto()
+    REPOSITION_TO_LEFT = auto()
     SWEEP = auto()
-    CLIMB_LAST = auto()
+    REPOSITION_FOR_DESCEND = auto()
     DESCEND = auto()
     TO_PIT = auto()
 
@@ -90,7 +91,9 @@ class NavigationController:
         self.collector = collector if collector is not None else Collector(cfg)
 
         # -- pose, in the start-relative frame ---------------------------------
-        self.x = cfg.START_X_CM
+        hill = getattr(cfg, "HILL_MODE", False)
+        self.x = (getattr(cfg, "HILL_CLIMB_X_CM", cfg.START_X_CM) if hill
+                  else cfg.START_X_CM)
         self.y = cfg.START_Y_CM
         self.heading_rel = 0.0       # current heading, degrees, relative to start
         self.target_heading = 0.0    # heading we want to hold down this lane
@@ -146,7 +149,7 @@ class NavigationController:
     def wants_climb_shovel(self):
         if not getattr(self.cfg, "HILL_MODE", False):
             return False
-        return self.phase in (Phase.CLIMB_FIRST, Phase.CLIMB_LAST, Phase.DESCEND)
+        return self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND)
 
     def note_blocking_maneuver(self):
         """Call after a blocking U-turn / dispose so the next tick does not odometry-bridge a long gap."""
@@ -243,24 +246,26 @@ class NavigationController:
 
         if self.phase is Phase.CLIMB_FIRST:
             if self.y >= cfg.HILL_TOP_Y_CM:
-                self.phase = Phase.SWEEP
-                print(f"[hill] top of slope (y={self.y:.0f}) -> sweep, shovel down")
-            return self._cmd_cruise(
-                readings, reason="climbing slope",
-                extra_steer=cfg.LEFT_HUG_TRIM)
+                self.phase = Phase.REPOSITION_TO_LEFT
+                print(f"[hill] top of slope (y={self.y:.0f}) -> reposition to left wall")
+            return self._cmd_cruise(readings, reason="climbing slope (centre)")
+
+        if self.phase is Phase.REPOSITION_TO_LEFT:
+            self.mode = Mode.DONE
+            return self._remember(Command(
+                Action.STOP, reason="reposition to left wall"))
 
         if self.phase is Phase.SWEEP:
             wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
                 self._lane_end_state(readings))
             if wall_trigger or odo_backstop:
                 if self._at_right_edge(readings):
-                    self.phase = Phase.CLIMB_LAST
-                    self.target_heading = 0.0
+                    self.phase = Phase.REPOSITION_FOR_DESCEND
                     self._wall_persist = 0
-                    print("[hill] right wall -> last climb")
-                    return self._cmd_cruise(
-                        readings, reason="right wall -> last climb",
-                        extra_steer=cfg.RIGHT_HUG_TRIM)
+                    print("[hill] right wall -> reposition to centre for descend")
+                    self.mode = Mode.DONE
+                    return self._remember(Command(
+                        Action.STOP, reason="right wall -> reposition for descend"))
                 if wall_trigger and trigger.startswith("wall") and "contact" not in trigger:
                     self._reanchor_lane_from_wall(end_dist)
                 turn = self._next_serpentine_turn
@@ -272,20 +277,10 @@ class NavigationController:
                     reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
             return self._cmd_cruise(readings, reason="sweeping")
 
-        if self.phase is Phase.CLIMB_LAST:
-            wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
-                self._lane_end_state(readings))
-            if wall_trigger or odo_backstop:
-                self.phase = Phase.DESCEND
-                self.target_heading = 180.0
-                self._wall_persist = 0
-                print("[hill] far wall -> descend")
-                return self._cmd_cruise(
-                    readings, reason="far wall -> descend",
-                    extra_steer=cfg.RIGHT_HUG_TRIM)
-            return self._cmd_cruise(
-                readings, reason="last climb",
-                extra_steer=cfg.RIGHT_HUG_TRIM)
+        if self.phase is Phase.REPOSITION_FOR_DESCEND:
+            self.mode = Mode.DONE
+            return self._remember(Command(
+                Action.STOP, reason="reposition for descend"))
 
         if self.phase is Phase.DESCEND:
             wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
@@ -299,9 +294,7 @@ class NavigationController:
                 self.mode = Mode.DONE
                 return self._remember(Command(
                     Action.STOP, reason="at start wall -> pit"))
-            return self._cmd_cruise(
-                readings, reason="descending slope",
-                extra_steer=cfg.RIGHT_HUG_TRIM)
+            return self._cmd_cruise(readings, reason="descending slope (centre)")
 
         return self._cmd_cruise(readings, reason="cruising")
 
@@ -453,6 +446,18 @@ class NavigationController:
         if y is not None:
             self.y = y
         self._wall_persist = 0
+
+    def reset_sweep_from_left(self):
+        """Re-anchor serpentine state after blocking drive to the left wall."""
+        cfg = self.cfg
+        first = getattr(cfg, "SERPENTINE_FIRST_TURN", "left").lower()
+        self._lane_index = 0
+        self._next_serpentine_turn = Turn.RIGHT if first == "right" else Turn.LEFT
+        self._sweep_sign = 1.0 if first == "right" else -1.0
+        self._last_turn = None
+        self._pit_handled = False
+        self.target_heading = 0.0
+        self.note_blocking_maneuver()
 
     def bearing_to_pit(self):
         """Heading (start-relative deg) pointing from the car toward the pit."""
