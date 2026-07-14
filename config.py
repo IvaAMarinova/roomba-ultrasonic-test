@@ -259,7 +259,7 @@ HEADING_HOLD_DEADBAND_DEG = 4.0   # ignore smaller errors (stops IMU weave)
 # Fixed mechanical trim on forward drives (no IMU). Compensates for uneven
 # wheels/motors after wear. Positive = nudge right (corrects left drift).
 # Tune on a long straight run; keep well below MAX_HEADING_TRIM.
-FORWARD_STEER_TRIM = 0.04
+FORWARD_STEER_TRIM = 0.0140
 
 # ---------------------------------------------------------------------------
 # Odometry end-of-lane BACKSTOP.
