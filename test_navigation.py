@@ -573,12 +573,10 @@ def test_hill_approach_wall_stops_then_spins():
     n = nav(cfg)
     n.phase = Phase.APPROACH_FAR_WALL
     n.lane_distance = cfg.ARENA_LENGTH_CM - 50.0
-    cmd = None
-    for _ in range(config.WALL_PERSIST_TICKS):
-        cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
-                       yaw=0.0, dt=0.1)
-    assert cmd.action is Action.SPIN_LEFT
-    assert n.phase is Phase.APPROACH_LEFT_WALL
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=0.0, dt=0.1)
+    assert cmd.action is Action.ALIGN_CENTER
+    assert n.phase is Phase.ALIGN_AT_FAR_WALL
 
 
 def test_hill_approach_wall_stops_with_bad_odometry():
@@ -590,9 +588,9 @@ def test_hill_approach_wall_stops_with_bad_odometry():
     n.y = 50.0
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=0.0, dt=0.0)
-    assert cmd.action is Action.SPIN_LEFT
+    assert cmd.action is Action.ALIGN_CENTER
     assert cmd.wall_stop
-    assert n.phase is Phase.APPROACH_LEFT_WALL
+    assert n.phase is Phase.ALIGN_AT_FAR_WALL
 
 
 def test_hill_left_wall_starts_sweep():
@@ -712,10 +710,24 @@ def test_benchmark_far_wall_turns_180():
     n.phase = Phase.BENCHMARK_OUT
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=0.0, dt=0.0)
-    assert cmd.action is Action.FACE_HEADING
+    assert cmd.action is Action.ALIGN_CENTER
     assert cmd.face_heading == 180.0
     assert cmd.wall_stop
-    assert n.phase is Phase.BENCHMARK_RETURN
+    assert n.phase is Phase.ALIGN_AT_FAR_WALL
+    assert n._post_align_phase is Phase.BENCHMARK_RETURN
+
+
+def test_hill_far_wall_aligns_before_left_wall():
+    n = nav(hill_cfg())
+    n.phase = Phase.APPROACH_FAR_WALL
+    n.lane_distance = 50.0
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=0.0, dt=0.0)
+    assert cmd.action is Action.ALIGN_CENTER
+    assert cmd.face_heading == -90.0
+    assert cmd.wall_stop
+    assert n.phase is Phase.ALIGN_AT_FAR_WALL
+    assert n._post_align_phase is Phase.APPROACH_LEFT_WALL
 
 
 def test_benchmark_collecting_on_flat():

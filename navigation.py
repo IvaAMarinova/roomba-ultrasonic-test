@@ -54,7 +54,8 @@ class Action(Enum):
     SPIN_LEFT = auto()       # 90 deg left only (hill: wall stop -> spin -> next leg)
     FACE_HEADING = auto()    # blocking spin to Command.face_heading (e.g. 180 deg)
     DISPOSE = auto()
-    ALIGN_PIT = auto()       # blocking: square to pit, center on side walls, then dump
+    ALIGN_CENTER = auto()    # blocking: square ±x, balance side sensors, then face_heading
+    ALIGN_PIT = auto()       # blocking: align at start wall, then dump
     STOP = auto()
 
 
@@ -73,6 +74,7 @@ class Phase(Enum):
     SWEEP = auto()
     APPROACH_HILL_CENTER = auto()
     DESCEND = auto()
+    ALIGN_AT_FAR_WALL = auto()   # blocking lateral align before turnaround at the far wall
     BENCHMARK_OUT = auto()       # flat: centre line to far wall, collecting
     BENCHMARK_RETURN = auto()    # turn 180, return to start wall, dump
     BENCHMARK_ALIGN_PIT = auto() # at start wall: face ±x, center with side sensors
@@ -131,6 +133,8 @@ class NavigationController:
         # Pit hysteresis: once we dump we don't re-trigger until we leave the zone.
         self._pit_handled = False
         self._return_origin_y = None   # y at far wall when benchmark return begins
+        self._post_align_heading = None
+        self._post_align_phase = None
 
         # Coverage: once the last lane (NUM_LANES-1) is finished, we're done.
         self._done = False
@@ -287,6 +291,11 @@ class NavigationController:
         if self.phase is Phase.BENCHMARK_RETURN:
             return self._benchmark_return(readings)
 
+        if self.phase is Phase.ALIGN_AT_FAR_WALL:
+            return self._remember(Command(
+                Action.ALIGN_CENTER, face_heading=self._post_align_heading,
+                wall_stop=True, reason="far wall lateral align"))
+
         if self.phase is Phase.BENCHMARK_ALIGN_PIT:
             if self._pit_handled:
                 self._done = True
@@ -349,21 +358,31 @@ class NavigationController:
 
         return self._cmd_cruise(readings, reason="cruising")
 
+    def _begin_far_wall_align(self, readings, end_dist, post_heading, post_phase, label):
+        """Re-anchor at the far wall, then lateral sensor align before turning back."""
+        self._reanchor_lane_from_wall(end_dist)
+        if post_phase is Phase.BENCHMARK_RETURN:
+            self._return_origin_y = self.y
+            self.lane_distance = 0.0
+        self._post_align_heading = post_heading
+        self._post_align_phase = post_phase
+        self.phase = Phase.ALIGN_AT_FAR_WALL
+        self.mode = Mode.TURNING
+        print(f"[{label}] far wall (y={self.y:.0f}, x={self.x:.0f}) "
+              f"-> align, face {post_heading:.0f}°")
+        return self._remember(Command(
+            Action.ALIGN_CENTER, face_heading=post_heading, wall_stop=True,
+            reason=f"far wall align {end_dist:.0f}cm"))
+
     def _benchmark_out(self, readings):
         """Centre line along +y to the far wall; scoop down and collecting."""
         cfg = self.cfg
         end_dist, end_agree = self._lane_end_wall(readings)
         if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                 and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
-            self._reanchor_lane_from_wall(end_dist)
-            self.phase = Phase.BENCHMARK_RETURN
-            self.lane_distance = 0.0
-            self._return_origin_y = self.y
-            self.target_heading = 180.0
-            print(f"[benchmark] far wall (y={self.y:.0f}) -> turn 180, return")
-            return self._remember(Command(
-                Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
-                reason=f"benchmark far wall {end_dist:.0f}cm"))
+            return self._begin_far_wall_align(
+                readings, end_dist, post_heading=180.0,
+                post_phase=Phase.BENCHMARK_RETURN, label="benchmark")
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
 
@@ -413,15 +432,15 @@ class NavigationController:
         end_dist, end_agree = self._lane_end_wall(readings)
         if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                 and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
-            self._reanchor_lane_from_wall(end_dist)
             trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
             if self.phase is Phase.APPROACH_FAR_WALL:
-                self.phase = Phase.APPROACH_LEFT_WALL
-                print("[hill] wall ahead -> spin left, seek left wall")
-            else:
-                self.reset_sweep_transverse(origin_y=self.y)
-                self.phase = Phase.SWEEP
-                print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
+                return self._begin_far_wall_align(
+                    readings, end_dist, post_heading=-90.0,
+                    post_phase=Phase.APPROACH_LEFT_WALL, label="hill")
+            self._reanchor_lane_from_wall(end_dist)
+            self.reset_sweep_transverse(origin_y=self.y)
+            self.phase = Phase.SWEEP
+            print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
             return self._hill_spin_left_cmd(trigger, wall_stop=True)
         return self._cmd_cruise(readings, reason="driving to wall", hold_heading=False)
 
@@ -583,6 +602,17 @@ class NavigationController:
         self.mode = Mode.DRIVING
         self.note_blocking_maneuver()
         self._prev_heading_rel = self.heading_rel
+
+    def complete_align_center(self, face_heading):
+        """Call after lateral wall align + spin to the departure heading."""
+        self.target_heading = face_heading
+        self.complete_face_heading(face_heading)
+        if self._post_align_phase is not None:
+            self.phase = self._post_align_phase
+            self._post_align_phase = None
+        self._post_align_heading = None
+        if self.phase is Phase.BENCHMARK_RETURN:
+            self.lane_distance = 0.0
 
     def complete_spin_left(self):
         """Call after a 90 deg left spin: update heading and start a fresh lane leg."""

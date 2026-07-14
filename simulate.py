@@ -69,6 +69,10 @@ def main():
         elif cmd.action is Action.DISPOSE:
             print("    --> at the pit: dispose out the back, then keep sweeping")
             nav.complete_dispose()         # main.py runs the reverse-and-dump here
+        elif cmd.action is Action.ALIGN_CENTER:
+            print("    --> align at wall, then face departure heading")
+            if cmd.face_heading is not None:
+                nav.complete_align_center(cmd.face_heading)
         elif cmd.action is Action.ALIGN_PIT:
             print("    --> align over pit with side sensors, then dump")
             nav._pit_handled = True

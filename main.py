@@ -261,21 +261,30 @@ def _pit_side_readings(readings):
     return fl, fr
 
 
-def _align_pit_center(logger, motors, cfg, imu, nav, sensors, period):
+def _align_wall_params(cfg):
+    align_hdg = getattr(cfg, "WALL_ALIGN_HEADING",
+                        getattr(cfg, "PIT_ALIGN_HEADING", 90.0))
+    tol = getattr(cfg, "WALL_CENTER_SENSOR_TOL_CM",
+                  getattr(cfg, "PIT_CENTER_SENSOR_TOL_CM", 10.0))
+    step_cm = getattr(cfg, "WALL_ALIGN_CREEP_CM",
+                      getattr(cfg, "PIT_ALIGN_CREEP_CM", 4.0))
+    max_creep = getattr(cfg, "WALL_ALIGN_MAX_CREEP_CM",
+                        getattr(cfg, "PIT_ALIGN_MAX_CREEP_CM", 80.0))
+    return align_hdg, tol, step_cm, max_creep
+
+
+def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label="wall"):
     """Face across the arena (perpendicular to launch), creep until side sensors agree."""
-    align_hdg = getattr(cfg, "PIT_ALIGN_HEADING", 90.0)
-    tol = getattr(cfg, "PIT_CENTER_SENSOR_TOL_CM", 10.0)
-    step_cm = getattr(cfg, "PIT_ALIGN_CREEP_CM", 4.0)
-    max_creep = getattr(cfg, "PIT_ALIGN_MAX_CREEP_CM", 80.0)
+    align_hdg, tol, step_cm, max_creep = _align_wall_params(cfg)
     cm_per_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED)
 
     readings = sensors.read_all()
     fl, fr = _pit_side_readings(readings)
-    logger.log("pit_align", step="start", front_left=fl, front_right=fr,
+    logger.log("wall_align", step="start", label=label, front_left=fl, front_right=fr,
                heading=nav.heading_rel, x=nav.x, y=nav.y)
-    print(f"[pit] side sensors at start: L={fl} R={fr} (heading={nav.heading_rel:.0f}°)")
+    print(f"[align] {label}: side sensors L={fl} R={fr} (heading={nav.heading_rel:.0f}°)")
 
-    print(f"[pit] square to {align_hdg:.0f}° (perpendicular to launch heading)")
+    print(f"[align] square to {align_hdg:.0f}° (perpendicular to launch heading)")
     _spin_to_heading(logger, motors, cfg, imu, nav, align_hdg)
     nav.target_heading = align_hdg
     nav.complete_face_heading(align_hdg)
@@ -285,14 +294,14 @@ def _align_pit_center(logger, motors, cfg, imu, nav, sensors, period):
         readings = sensors.read_all()
         fl, fr = _pit_side_readings(readings)
         diff = abs(fl - fr) if fl is not None and fr is not None else None
-        logger.log("pit_align", step="sample", front_left=fl, front_right=fr,
+        logger.log("wall_align", step="sample", label=label, front_left=fl, front_right=fr,
                    diff=diff, heading=nav.heading_rel, x=nav.x)
-        print(f"[pit] L={fl} R={fr} diff={diff} x={nav.x:.0f}")
+        print(f"[align] L={fl} R={fr} diff={diff} x={nav.x:.0f}")
 
         if fl is not None and fr is not None and abs(fl - fr) <= tol:
-            print(f"[pit] centred (L={fl:.0f} R={fr:.0f} cm, x={nav.x:.0f})")
-            logger.log("pit_align", step="centered", front_left=fl, front_right=fr,
-                       x=nav.x)
+            print(f"[align] centred (L={fl:.0f} R={fr:.0f} cm, x={nav.x:.0f})")
+            logger.log("wall_align", step="centered", label=label, front_left=fl,
+                       front_right=fr, x=nav.x)
             break
 
         if fl is None or fr is None:
@@ -302,8 +311,9 @@ def _align_pit_center(logger, motors, cfg, imu, nav, sensors, period):
         along = 1.0 if fl < fr else -1.0
         creep = min(step_cm, max_creep - creeped)
         seconds = creep / cm_per_s if cm_per_s > 0 else 0.0
-        logger.log("pit_align", step="creep", direction="+" if along > 0 else "-",
-                   cm=creep, front_left=fl, front_right=fr)
+        logger.log("wall_align", step="creep", label=label,
+                   direction="+" if along > 0 else "-", cm=creep,
+                   front_left=fl, front_right=fr)
         speed = cfg.SLOW_SPEED if along > 0 else -cfg.SLOW_SPEED
         motors.drive(logger, speed, 0.0)
         time.sleep(seconds)
@@ -311,8 +321,8 @@ def _align_pit_center(logger, motors, cfg, imu, nav, sensors, period):
         nav.x += along * creep
         creeped += creep
     else:
-        print(f"[pit] align search limit ({max_creep:.0f} cm), x={nav.x:.0f}")
-        logger.log("pit_align", step="max_creep", cm=creeped, x=nav.x)
+        print(f"[align] search limit ({max_creep:.0f} cm), x={nav.x:.0f}")
+        logger.log("wall_align", step="max_creep", label=label, cm=creeped, x=nav.x)
 
     nav.note_blocking_maneuver()
 
@@ -474,9 +484,9 @@ def _wall_stop_lift(logger, motors, front_servo, cmd, cfg=None):
     if not cmd.wall_stop or front_servo is None:
         return
     motors.stop(logger)
-    # Benchmark turnaround: pause at the wall but keep scoop out of a collect cycle.
+    # Far-wall turnaround: pause at the wall but keep scoop out of a collect cycle.
     if (cfg is not None and getattr(cfg, "HILL_BENCHMARK_MODE", False)
-            and cmd.action is Action.FACE_HEADING
+            and cmd.action in (Action.FACE_HEADING, Action.ALIGN_CENTER)
             and cmd.face_heading == 180.0):
         logger.log("wall_stop", step="pause", reason=cmd.reason)
         return
@@ -502,12 +512,28 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
         _u_turn(logger, motors, cfg, direction, imu, nav, front_servo)
+    elif cmd.action is Action.ALIGN_CENTER:
+        _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
+        if sensors is None:
+            logger.log("wall_align", step="skip", reason="no sensors")
+            if cmd.face_heading is not None:
+                _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
+                nav.complete_align_center(cmd.face_heading)
+        else:
+            _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period,
+                                  label=cmd.reason)
+            print(f"[align] -> face {cmd.face_heading:.0f}°")
+            _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
+            nav.complete_align_center(cmd.face_heading)
+            if front_servo is not None and nav.wants_climb_shovel:
+                front_servo.climb()
     elif cmd.action is Action.ALIGN_PIT:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         if sensors is None:
-            logger.log("pit_align", step="skip", reason="no sensors")
+            logger.log("wall_align", step="skip", reason="no sensors")
         else:
-            _align_pit_center(logger, motors, cfg, imu, nav, sensors, period)
+            _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period,
+                                  label="pit")
             print("[pit] aligned -> face start wall and dump")
             _spin_to_heading(logger, motors, cfg, imu, nav, 0.0)
             nav.target_heading = 0.0
@@ -596,7 +622,8 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     hill = getattr(cfg, "HILL_MODE", False)
     benchmark = getattr(cfg, "HILL_BENCHMARK_MODE", False)
     if hill and benchmark:
-        mode_label = ("benchmark: climb -> far wall -> 180 -> return -> align pit -> dump "
+        mode_label = ("benchmark: climb -> far wall -> align -> 180 -> return "
+                      "-> align pit -> dump "
                       f"(collect {getattr(cfg, 'BENCHMARK_COLLECT_BLOCKS', 1)} block)")
     elif hill:
         mode_label = "hill: wall stop -> spin left -> sideways sweep -> dump"
