@@ -60,7 +60,7 @@ def drive_to_near_end(n, cfg=config):
 def test_open_space_cruises_forward():
     cmd = nav().decide(reading(), yaw=0.0, dt=0.0)
     assert cmd.action is Action.FORWARD
-    assert cmd.speed == config.DRIVE_SPEED
+    assert cmd.speed == config.SLOW_SPEED
 
 
 def test_on_heading_cruises_straight():
@@ -99,7 +99,16 @@ def test_hill_climb_drives_straight():
     n.phase = Phase.CLIMB_FIRST
     cmd = n.decide(reading(front_right=18.0), yaw=8.0, dt=0.1)
     assert cmd.action is Action.FORWARD
+    assert cmd.speed == config.DRIVE_SPEED
     assert cmd.steer == 0.0
+
+
+def test_hill_approach_uses_slow_speed():
+    n = nav(hill_cfg())
+    n.phase = Phase.APPROACH_FAR_WALL
+    cmd = n.decide(reading(), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert cmd.speed == config.SLOW_SPEED
 
 
 def test_no_imu_drives_open_loop_straight():

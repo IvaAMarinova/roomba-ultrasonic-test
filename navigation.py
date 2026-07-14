@@ -365,12 +365,18 @@ class NavigationController:
         print(f"[hill] at centre (x={self.x:.0f}, y={self.y:.0f}) -> descend")
         return self._cmd_cruise(readings, reason="descending slope (centre)")
 
+    def _cruise_speed(self):
+        """Full speed only on the hill climb; everything else is slow."""
+        cfg = self.cfg
+        if getattr(cfg, "HILL_MODE", False) and self.phase is Phase.CLIMB_FIRST:
+            return cfg.DRIVE_SPEED
+        return cfg.SLOW_SPEED
+
     def _cmd_cruise(self, readings, reason="", extra_steer=0.0, hold_heading=True):
         """Forward at cruise speed with IMU heading-hold (+ optional wall-hug trim)."""
         cfg = self.cfg
         self.mode = Mode.DRIVING
-        speed = (cfg.SLOW_SPEED if self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM
-                 else cfg.DRIVE_SPEED)
+        speed = self._cruise_speed()
         trim = self._cruise_trim(readings) if hold_heading else 0.0
         steer = trim + extra_steer
         steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, steer))

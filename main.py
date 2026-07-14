@@ -193,7 +193,7 @@ def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
 
 def _advance_one_lane(logger, motors, cfg):
     """Drive straight by LANE_WIDTH_CM (the sideways shift into the next lane)."""
-    motors.drive(logger, cfg.DRIVE_SPEED, 0.0)
+    motors.drive(logger, cfg.SLOW_SPEED, 0.0)
     time.sleep(cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S)
     motors.stop(logger)
 
@@ -454,7 +454,7 @@ def run_drive_test(logger, motors, cfg, imu=None):
             continue
         logger.log("drive_test", step=action, seconds=seconds)
         if action == "forward":
-            motors.drive(logger, cfg.DRIVE_SPEED, 0.0)
+            motors.drive(logger, cfg.SLOW_SPEED, 0.0)
         else:  # "stop"
             motors.stop(logger)
         time.sleep(seconds)
