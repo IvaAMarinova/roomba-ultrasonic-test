@@ -46,7 +46,6 @@ HILL_SWEEP_NUM_LANES = math.ceil(HILL_SWEEP_HALF_Y_CM / LANE_WIDTH_CM)
 HILL_MODE = True
 HILL_BENCHMARK_MODE = True
 BENCHMARK_COLLECT_BLOCKS = 1
-BENCHMARK_LIFT_INTERVAL_S = 4.0   # stop + scoop this often on the flat (benchmark outbound)
 BENCHMARK_MIN_RETURN_CM = 55.0   # return leg travel before a front wall stop counts as home
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
