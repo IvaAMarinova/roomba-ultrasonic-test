@@ -411,6 +411,10 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
         _wall_stop_lift(logger, motors, front_servo, cmd)
         _spin_90(logger, motors, cfg, "left", imu)
         nav.complete_spin_left()
+    elif cmd.action is Action.FACE_HEADING:
+        _wall_stop_lift(logger, motors, front_servo, cmd)
+        _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
+        nav.complete_face_heading(cmd.face_heading)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         _wall_stop_lift(logger, motors, front_servo, cmd)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
@@ -468,7 +472,8 @@ def _sync_shovel(front_servo, nav, last_phase):
     if phase is Phase.CLIMB_FIRST:
         front_servo.climb()
     elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
-                   Phase.APPROACH_HILL_CENTER):
+                   Phase.APPROACH_HILL_CENTER, Phase.BENCHMARK_OUT,
+                   Phase.BENCHMARK_RETURN):
         front_servo.lower()
     elif phase is Phase.DESCEND:
         front_servo.climb()
@@ -497,8 +502,14 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     drive_mode = "IMU heading-hold"
     print("=" * 78)
     hill = getattr(cfg, "HILL_MODE", False)
-    mode_label = ("hill: wall stop -> spin left -> sideways sweep -> dump"
-                  if hill else "IMU + wall-referenced navigation with disposal")
+    benchmark = getattr(cfg, "HILL_BENCHMARK_MODE", False)
+    if hill and benchmark:
+        mode_label = ("benchmark: climb -> far wall -> 180 -> return -> dump "
+                      f"(collect {getattr(cfg, 'BENCHMARK_COLLECT_BLOCKS', 1)} block)")
+    elif hill:
+        mode_label = "hill: wall stop -> spin left -> sideways sweep -> dump"
+    else:
+        mode_label = "IMU + wall-referenced navigation with disposal"
     print(f"USE_SENSORS = True -> {mode_label}")
     print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm, "
           f"{cfg.NUM_LANES} lanes x {cfg.LANE_WIDTH_CM:.0f} cm (stop when all swept)")
@@ -555,9 +566,19 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             # Scoop only in the collection zone (hill mode) or on interval (legacy).
             if cmd.action is Action.FORWARD and front_servo is not None and nav.collecting:
                 drive_elapsed += dt
-                if drive_elapsed >= cfg.FRONT_SERVO_INTERVAL_S:
+                lift_interval = (getattr(cfg, "BENCHMARK_LIFT_INTERVAL_S",
+                                         cfg.FRONT_SERVO_INTERVAL_S)
+                                 if getattr(cfg, "HILL_BENCHMARK_MODE", False)
+                                 else cfg.FRONT_SERVO_INTERVAL_S)
+                if drive_elapsed >= lift_interval:
                     motors.stop(logger)  # HACK: this probably breaks more than it fixes
                     front_servo.lift_cycle()
+                    if (getattr(cfg, "HILL_BENCHMARK_MODE", False)
+                            and nav.collector.count
+                            < getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)):
+                        nav.collector.add(1)
+                        logger.log("benchmark", step="collect",
+                                   count=nav.collector.count)
                     drive_elapsed = 0.0
                     last_t = time.monotonic()   # scoop blocks -- don't bridge that gap
 

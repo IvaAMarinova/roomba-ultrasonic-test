@@ -40,8 +40,13 @@ HILL_SWEEP_NUM_LANES = math.ceil(HILL_SWEEP_HALF_Y_CM / LANE_WIDTH_CM)
 #   DESCEND                -- downhill through the centre; wall stop -> dump.
 # Climbing/descending the slope is much easier in the centre of the hill.
 # Set HILL_MODE = False to restore the old full-arena serpentine + mid-sweep pit.
+# HILL_BENCHMARK_MODE = True skips the sideways sweep: climb -> far wall ->
+# turn 180 -> return -> dump (collect BENCHMARK_COLLECT_BLOCKS on the flat).
 # ---------------------------------------------------------------------------
 HILL_MODE = True
+HILL_BENCHMARK_MODE = True
+BENCHMARK_COLLECT_BLOCKS = 1
+BENCHMARK_LIFT_INTERVAL_S = 8.0   # scoop lift cadence on the flat (faster than full sweep)
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall

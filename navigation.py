@@ -33,6 +33,7 @@ import math
 import statistics
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Optional
 
 import config as default_config
 from actuators import Collector
@@ -51,6 +52,7 @@ class Action(Enum):
     TURN_LEFT = auto()
     TURN_RIGHT = auto()
     SPIN_LEFT = auto()       # 90 deg left only (hill: wall stop -> spin -> next leg)
+    FACE_HEADING = auto()    # blocking spin to Command.face_heading (e.g. 180 deg)
     DISPOSE = auto()
     STOP = auto()
 
@@ -70,6 +72,8 @@ class Phase(Enum):
     SWEEP = auto()
     APPROACH_HILL_CENTER = auto()
     DESCEND = auto()
+    BENCHMARK_OUT = auto()       # flat: centre line to far wall, collecting
+    BENCHMARK_RETURN = auto()    # turn 180, return to start wall, dump
 
 
 class Turn(Enum):
@@ -85,6 +89,7 @@ class Command:
     steer: float = 0.0       # only used with FORWARD: -1 = full left .. +1 = full right
     reason: str = ""         # human-readable explanation, handy for logs/tests
     wall_stop: bool = False    # pause + front scoop lift before this maneuver
+    face_heading: Optional[float] = None  # for FACE_HEADING: start-relative target deg
 
 
 class NavigationController:
@@ -147,15 +152,26 @@ class NavigationController:
     @property
     def collecting(self):
         """True when the front scoop should run lift cycles."""
+        if getattr(self.cfg, "HILL_BENCHMARK_MODE", False):
+            return self.phase in (Phase.BENCHMARK_OUT, Phase.BENCHMARK_RETURN)
         if not getattr(self.cfg, "HILL_MODE", False):
             return True
         return self.phase is Phase.SWEEP
+
+    def _benchmark_mode(self):
+        return (getattr(self.cfg, "HILL_MODE", False)
+                and getattr(self.cfg, "HILL_BENCHMARK_MODE", False))
 
     @property
     def wants_climb_shovel(self):
         if not getattr(self.cfg, "HILL_MODE", False):
             return False
-        return self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND)
+        if self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND):
+            return True
+        if (self._benchmark_mode() and self.phase is Phase.BENCHMARK_RETURN
+                and self.y <= getattr(self.cfg, "HILL_TOP_Y_CM", 0) + 5.0):
+            return True
+        return False
 
     def note_blocking_maneuver(self):
         """Call after a blocking U-turn / dispose so the next tick does not odometry-bridge a long gap."""
@@ -250,11 +266,21 @@ class NavigationController:
 
         if self.phase is Phase.CLIMB_FIRST:
             if self.y >= cfg.HILL_TOP_Y_CM:
-                self.phase = Phase.APPROACH_FAR_WALL
                 self.lane_distance = self.y - cfg.START_Y_CM
-                print(f"[hill] top of slope (y={self.y:.0f}) -> drive to wall")
+                if self._benchmark_mode():
+                    self.phase = Phase.BENCHMARK_OUT
+                    print(f"[benchmark] top of slope (y={self.y:.0f}) -> far wall")
+                else:
+                    self.phase = Phase.APPROACH_FAR_WALL
+                    print(f"[hill] top of slope (y={self.y:.0f}) -> drive to wall")
             return self._cmd_cruise(readings, reason="climbing slope (centre)",
                                      hold_heading=False)
+
+        if self.phase is Phase.BENCHMARK_OUT:
+            return self._benchmark_out(readings)
+
+        if self.phase is Phase.BENCHMARK_RETURN:
+            return self._benchmark_return(readings)
 
         if self.phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL):
             return self._hill_wall_then_spin_left(readings)
@@ -310,6 +336,40 @@ class NavigationController:
 
         return self._cmd_cruise(readings, reason="cruising")
 
+    def _benchmark_out(self, readings):
+        """Centre line along +y to the far wall; scoop down and collecting."""
+        cfg = self.cfg
+        end_dist, end_agree = self._lane_end_wall(readings)
+        if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
+                and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
+            self._reanchor_lane_from_wall(end_dist)
+            self.phase = Phase.BENCHMARK_RETURN
+            self.lane_distance = 0.0
+            self.target_heading = 180.0
+            print(f"[benchmark] far wall (y={self.y:.0f}) -> turn 180, return")
+            return self._remember(Command(
+                Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
+                reason=f"benchmark far wall {end_dist:.0f}cm"))
+        return self._cmd_cruise(readings, reason="benchmark: to far wall",
+                                hold_heading=True)
+
+    def _benchmark_return(self, readings):
+        """Drive centre line home (heading 180); dump at the start wall."""
+        cfg = self.cfg
+        need = getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)
+        end_dist, end_agree = self._lane_end_wall(readings)
+        at_wall = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
+                   and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
+        if at_wall and self.collector.count >= need:
+            self._pit_handled = True
+            self.mode = Mode.DISPOSING
+            print(f"[benchmark] start wall (y={self.y:.0f}, "
+                  f"blocks={self.collector.count}) -> dump")
+            return self._remember(Command(
+                Action.DISPOSE, reason="benchmark home -> dump", wall_stop=True))
+        return self._cmd_cruise(readings, reason="benchmark: return home",
+                                hold_heading=True)
+
     def _hill_wall_then_spin_left(self, readings):
         """Drive until front sensors see the wall, then spin 90 deg left.
 
@@ -339,7 +399,8 @@ class NavigationController:
         if not getattr(cfg, "HILL_MODE", False):
             return False
         return self.phase in (Phase.CLIMB_FIRST, Phase.APPROACH_FAR_WALL,
-                              Phase.APPROACH_LEFT_WALL)
+                              Phase.APPROACH_LEFT_WALL, Phase.BENCHMARK_OUT,
+                              Phase.BENCHMARK_RETURN)
 
     def _hill_spin_left_cmd(self, reason, wall_stop=False):
         self.mode = Mode.TURNING
@@ -482,6 +543,14 @@ class NavigationController:
             if d != INF and d <= cfg.RIGHT_WALL_STOP_CM:
                 return True
         return False
+
+    def complete_face_heading(self, target_heading):
+        """Call after a blocking FACE_HEADING spin."""
+        self.target_heading = target_heading
+        self.lane_distance = 0.0
+        self.mode = Mode.DRIVING
+        self.note_blocking_maneuver()
+        self._prev_heading_rel = self.heading_rel
 
     def complete_spin_left(self):
         """Call after a 90 deg left spin: update heading and start a fresh lane leg."""

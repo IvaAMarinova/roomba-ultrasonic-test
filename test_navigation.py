@@ -554,6 +554,7 @@ def hill_cfg(**overrides):
         LANE_WIDTH_CM=35.0,
         PIT_X_CM=75.0,
         PIT_Y_CM=0.0,
+        HILL_BENCHMARK_MODE=False,
     )
     base.update(overrides)
     return cfg_with(**base)
@@ -694,6 +695,49 @@ def test_hill_reset_sweep_transverse():
     assert n._lane_index == 0
     assert n._sweep_transverse
     assert n.target_heading == 90.0
+
+
+# -- hill benchmark (out-and-back, no sweep) ---------------------------------
+
+def test_benchmark_climb_to_out():
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
+    assert n.phase is Phase.CLIMB_FIRST
+    n.lane_distance = 51.0
+    n.decide(reading(), yaw=0.0, dt=0.0)
+    assert n.phase is Phase.BENCHMARK_OUT
+
+
+def test_benchmark_far_wall_turns_180():
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
+    n.phase = Phase.BENCHMARK_OUT
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=0.0, dt=0.0)
+    assert cmd.action is Action.FACE_HEADING
+    assert cmd.face_heading == 180.0
+    assert cmd.wall_stop
+    assert n.phase is Phase.BENCHMARK_RETURN
+
+
+def test_benchmark_collecting_on_flat():
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
+    n.phase = Phase.BENCHMARK_OUT
+    assert n.collecting
+    n.phase = Phase.BENCHMARK_RETURN
+    assert n.collecting
+    n.phase = Phase.CLIMB_FIRST
+    assert not n.collecting
+
+
+def test_benchmark_return_dumps_with_one_block():
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
+    n.phase = Phase.BENCHMARK_RETURN
+    n.target_heading = 180.0
+    n.collector.add(1)
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=180.0, dt=0.0)
+    assert cmd.action is Action.DISPOSE
+    assert cmd.wall_stop
+    assert n.mode is Mode.DISPOSING
 
 
 def _run():
