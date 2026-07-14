@@ -84,12 +84,25 @@ def _spin_imu(logger, motors, cfg, direction, imu):
     return abs(turned)
 
 
-def _spin_90(logger, motors, cfg, direction, imu=None):
-    """Rotate ~TURN_ANGLE_DEG in place.
+def _raise_shovel_for_turn(logger, motors, front_servo):
+    """Every in-place turn runs with the scoop raised (it drags/catches otherwise).
+
+    Stops the motors first so the car isn't still rolling while the servo ramps.
+    The caller restores the phase height afterwards (_sync_shovel_height).
+    """
+    if front_servo is None:
+        return
+    motors.stop(logger)
+    front_servo.raise_up()
+
+
+def _spin_90(logger, motors, cfg, direction, imu=None, front_servo=None):
+    """Rotate ~TURN_ANGLE_DEG in place, scoop raised for the duration.
 
     Uses IMU heading feedback when an IMU is present and USE_IMU_TURN is set;
     otherwise (or if the IMU yields no reading) falls back to the timed spin.
     """
+    _raise_shovel_for_turn(logger, motors, front_servo)
     if imu is not None and imu.available and getattr(cfg, "USE_IMU_TURN", False):
         turned = _spin_imu(logger, motors, cfg, direction, imu)
         if turned is not None:
@@ -115,12 +128,12 @@ def _heading_aligned(imu, nav, target_rel, tol):
     return abs(angle_diff(target_rel, cur)) <= tol
 
 
-def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
+def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel, front_servo=None):
     """Rotate in place until the car's heading ~= target_rel (start-relative deg).
 
     Accumulates signed heading change (like U-turn spins) so a 3° correction
     stops after ~3°, not after the full IMU timeout. Spins one way without
-    per-tick direction flips.
+    per-tick direction flips. Raises the scoop first when it actually turns.
     """
     cur = nav.rel_heading(imu.yaw()) if imu is not None else None
     if cur is None:
@@ -130,6 +143,7 @@ def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
     if abs(err0) <= cfg.IMU_TURN_TOLERANCE_DEG:
         logger.log("orient", step="skip", target=target_rel, current=cur, error=err0)
         return True
+    _raise_shovel_for_turn(logger, motors, front_servo)
     logger.log("orient", step="turn", target=target_rel, current=cur, error=err0)
 
     direction = "right" if err0 > 0 else "left"
@@ -206,12 +220,13 @@ def _lane_turn_left(logger, motors, cfg, imu, nav, front_servo=None):
     """Sideways sweep lane change: spin left 90, shift one lane, spin left 90."""
     shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
     logger.log("lane_turn", step="spin", direction="left", deg=cfg.TURN_ANGLE_DEG)
-    _spin_90(logger, motors, cfg, "left", imu)
+    _spin_90(logger, motors, cfg, "left", imu, front_servo)
     logger.log("lane_turn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
     _advance_one_lane(logger, motors, cfg, front_servo, nav)
     logger.log("lane_turn", step="spin", direction="left", deg=cfg.TURN_ANGLE_DEG)
-    _spin_90(logger, motors, cfg, "left", imu)
+    _spin_90(logger, motors, cfg, "left", imu, front_servo)
     nav.complete_turn()
+    _sync_shovel_height(front_servo, nav)
     logger.log("lane_turn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
 
 
@@ -224,12 +239,13 @@ def _u_turn(logger, motors, cfg, direction, imu, nav, front_servo=None):
     """
     shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
     logger.log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
-    _spin_90(logger, motors, cfg, direction, imu)
+    _spin_90(logger, motors, cfg, direction, imu, front_servo)
     logger.log("uturn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
     _advance_one_lane(logger, motors, cfg, front_servo, nav)
     logger.log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
-    _spin_90(logger, motors, cfg, direction, imu)
+    _spin_90(logger, motors, cfg, direction, imu, front_servo)
     nav.complete_turn()
+    _sync_shovel_height(front_servo, nav)
     logger.log("uturn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
 
 
@@ -270,7 +286,8 @@ def _align_wall_params(cfg):
     return align_hdg, tol, step_cm, max_creep
 
 
-def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label="wall"):
+def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label="wall",
+                          front_servo=None):
     """Face across the arena (perpendicular to launch), creep until side sensors agree."""
     align_hdg, tol, step_cm, max_creep = _align_wall_params(cfg)
     cm_per_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED)
@@ -282,7 +299,7 @@ def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label=
     print(f"[align] {label}: side sensors L={fl} R={fr} (heading={nav.heading_rel:.0f}°)")
 
     print(f"[align] square to {align_hdg:.0f}° (perpendicular to launch heading)")
-    _spin_to_heading(logger, motors, cfg, imu, nav, align_hdg)
+    _spin_to_heading(logger, motors, cfg, imu, nav, align_hdg, front_servo)
     nav.target_heading = align_hdg
     nav.complete_face_heading(align_hdg)
 
@@ -324,7 +341,8 @@ def _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period, label=
     nav.note_blocking_maneuver()
 
 
-def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
+def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None,
+             front_servo=None):
     """Disposal maneuver for a SMALL (car-sized) pit: seat the rear over it, dump.
 
       1. Turn so the car's BACK faces the pit.
@@ -346,7 +364,7 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
         cur = nav.rel_heading(imu.yaw() if imu is not None else None)
         if (cur is None
                 or abs(angle_diff(target, cur)) > cfg.ORIENT_SKIP_DEG):
-            _spin_to_heading(logger, motors, cfg, imu, nav, target)
+            _spin_to_heading(logger, motors, cfg, imu, nav, target, front_servo)
 
     door_thread = disposer.start_opening()
     time.sleep(0.1) # Need to back up first
@@ -365,13 +383,14 @@ def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     cur = nav.rel_heading(imu.yaw() if imu is not None else None)
     if (cur is not None
             and abs(angle_diff(nav.target_heading, cur)) > cfg.ORIENT_SKIP_DEG):
-        _spin_to_heading(logger, motors, cfg, imu, nav, nav.target_heading)
+        _spin_to_heading(logger, motors, cfg, imu, nav, nav.target_heading, front_servo)
     nav.complete_dispose()
+    _sync_shovel_height(front_servo, nav)
     logger.log("dispose", step="done")
 
 
 def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading,
-                   stop_distance=None):
+                   stop_distance=None, front_servo=None):
     """Turn to `target_heading`, then drive (slow, heading-held) toward a wall.
 
     Stops when a believed FRONT wall is within `stop_distance` (default the normal
@@ -388,10 +407,12 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
     if stop_distance is None:
         stop_distance = cfg.FRONT_STOP_DISTANCE_CM
     tol = cfg.IMU_TURN_TOLERANCE_DEG
-    if not _spin_to_heading(logger, motors, cfg, imu, nav, target_heading):
+    if not _spin_to_heading(logger, motors, cfg, imu, nav, target_heading,
+                            front_servo):
         logger.log("drive_wall", step="warn", reason="orient incomplete",
                    target=target_heading)
     nav.target_heading = target_heading
+    _sync_shovel_height(front_servo, nav)
     cm_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED) if cfg.DRIVE_SPEED else 0.0
     deadline = time.time() + (2.0 * cfg.ARENA_LENGTH_CM / cm_s if cm_s > 0 else 30.0)
     min_ticks = max(5, int(0.5 / period))
@@ -443,7 +464,8 @@ def _approach_pit(logger, motors, cfg, imu, nav, disposer, sensors, period):
     print("[pit] dump complete -- run finished.")
 
 
-def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period):
+def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors,
+                               period, front_servo=None):
     """After the sweep: go back to the pit (mid start wall) and dump the remainder.
 
     Sensor-referenced legs re-anchor nav pose after each wall so stale odometry
@@ -457,21 +479,25 @@ def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors,
     standoff = cfg.FRONT_STOP_DISTANCE_CM
 
     print("[return] leg 1: drive to the start wall (the pit's side)")
-    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=180.0)
+    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=180.0,
+                   front_servo=front_servo)
     nav.set_pose(y=standoff, target_heading=180.0)
 
     print("[return] leg 2a: face -x, drive to the left wall (front sensors)")
-    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
+    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=-90.0,
+                   front_servo=front_servo)
     nav.set_pose(x=cfg.START_X_CM + standoff, target_heading=-90.0)
 
     print("[return] leg 2b: face +x, drive until the right wall marks the pit's middle")
     _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=90.0,
-                   stop_distance=cfg.ARENA_WIDTH_CM - cfg.PIT_X_CM)
+                   stop_distance=cfg.ARENA_WIDTH_CM - cfg.PIT_X_CM,
+                   front_servo=front_servo)
     nav.set_pose(x=cfg.PIT_X_CM, target_heading=90.0)
 
     print("[return] leg 3: final dump into the pit")
     nav.target_heading = 0.0
-    _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
+    _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0,
+             front_servo=front_servo)
     nav.set_pose(x=cfg.PIT_X_CM, y=standoff, target_heading=0.0)
     print("[return] final dump complete -- arena swept and emptied.")
 
@@ -496,8 +522,9 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         motors.drive(logger, -cmd.speed, cmd.steer)
     elif cmd.action is Action.SPIN_LEFT:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
-        _spin_90(logger, motors, cfg, "left", imu)
+        _spin_90(logger, motors, cfg, "left", imu, front_servo)
         nav.complete_spin_left()
+        _sync_shovel_height(front_servo, nav)
     elif cmd.action is Action.FACE_HEADING:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         if (getattr(cfg, "HILL_BENCHMARK_MODE", False) and cmd.face_heading == 180.0
@@ -507,7 +534,7 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
             nav.collector.add(1)
             logger.log("benchmark", step="collect_at_far_wall",
                        count=nav.collector.count)
-        _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
+        _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading, front_servo)
         nav.complete_face_heading(cmd.face_heading)
         _sync_shovel_height(front_servo, nav)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
@@ -519,13 +546,16 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         if sensors is None:
             logger.log("wall_align", step="skip", reason="no sensors")
             if cmd.face_heading is not None:
-                _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
+                _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading,
+                                 front_servo)
                 nav.complete_align_center(cmd.face_heading)
+                _sync_shovel_height(front_servo, nav)
         else:
             _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period,
-                                  label=cmd.reason)
+                                  label=cmd.reason, front_servo=front_servo)
             print(f"[align] -> face {cmd.face_heading:.0f}°")
-            _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
+            _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading,
+                             front_servo)
             nav.complete_align_center(cmd.face_heading)
             _sync_shovel_height(front_servo, nav)
     elif cmd.action is Action.ALIGN_PIT:
@@ -534,14 +564,15 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
             logger.log("wall_align", step="skip", reason="no sensors")
         else:
             _align_center_lateral(logger, motors, cfg, imu, nav, sensors, period,
-                                  label="pit")
+                                  label="pit", front_servo=front_servo)
             print("[pit] aligned -> face start wall and dump")
-            _spin_to_heading(logger, motors, cfg, imu, nav, 0.0)
+            _spin_to_heading(logger, motors, cfg, imu, nav, 0.0, front_servo)
             nav.target_heading = 0.0
-            _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
+            _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0,
+                     front_servo=front_servo)
     elif cmd.action is Action.DISPOSE:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
-        _dispose(logger, motors, cfg, imu, nav, disposer)
+        _dispose(logger, motors, cfg, imu, nav, disposer, front_servo=front_servo)
     elif cmd.action is Action.STOP:
         if cmd.wall_stop:
             _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
@@ -726,7 +757,8 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
 
             if nav.mode is Mode.DONE and not hill:
                 print(f"[nav] coverage complete: swept all {cfg.NUM_LANES} lanes")
-                _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period)
+                _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer,
+                                           sensors, period, front_servo)
                 break
             time.sleep(period)
     finally:
