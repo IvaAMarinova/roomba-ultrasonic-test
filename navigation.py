@@ -136,6 +136,7 @@ class NavigationController:
         self._return_origin_y = None   # y at far wall when benchmark return begins
         self._rear_persist = 0         # consecutive ticks the rear wall-stop has held
         self._far_persist = 0          # consecutive ticks the benchmark far-wall stop has held
+        self._far_armed = False        # tight pair has seen clear space ahead this leg
         self._post_align_heading = None
         self._post_align_phase = None
 
@@ -367,14 +368,21 @@ class NavigationController:
         then reverses into the start wall). The stop needs a TIGHT pair
         spread (the cluster test alone lets two readings differ by 2x the
         tolerance), odometry past BENCHMARK_FAR_WALL_MIN_Y_CM, and
-        persistence. Odometry is the backstop if the sensors never fire.
+        persistence. On top of that the stop must be ARMED by first seeing
+        clear space ahead: the lowered scoop can sit at the standoff distance
+        in BOTH sensors' view for the whole leg (constant ~41 cm, tight), and
+        that phantom passes every other gate the moment odometry crosses
+        MIN_Y. Odometry is the backstop if the sensors never fire.
         """
         cfg = self.cfg
         finite = self._enabled_front_distances(readings)
         tight = (len(finite) >= cfg.FRONT_AGREE_MIN_COUNT
                  and max(finite) - min(finite) <= cfg.FRONT_AGREE_TOL_CM)
         end_dist = statistics.median(finite) if tight else INF
-        far_hold = (tight and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+        if tight and end_dist >= getattr(cfg, "BENCHMARK_FAR_WALL_ARM_CM", 80.0):
+            self._far_armed = True
+        far_hold = (tight and self._far_armed
+                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
                     and self.y >= getattr(cfg, "BENCHMARK_FAR_WALL_MIN_Y_CM",
                                           200.0))
         self._far_persist = self._far_persist + 1 if far_hold else 0

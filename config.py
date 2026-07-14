@@ -58,6 +58,14 @@ BENCHMARK_MIN_RETURN_CM = 55.0   # reverse travel before a rear wall stop counts
 # backstop at ARENA_LENGTH - FRONT_STOP_DISTANCE ends the leg instead.
 BENCHMARK_FAR_WALL_MIN_Y_CM = 200.0   # ignore far-wall stops before odometry passes this
 BENCHMARK_FAR_WALL_PERSIST_TICKS = 3  # consecutive agreeing ticks before stopping
+# The lowered scoop can park a CONSTANT echo right at the standoff in BOTH front
+# sensors (2026-07-14 14:36 run: fl~44/fr~36 from y=0 to the end, spread ~9 so
+# "tight" passed). That phantom satisfies every gate above the instant odometry
+# crosses MIN_Y, re-anchors y ~53 cm forward, and the return slams the start
+# wall again. A real wall approach must first show CLEAR space ahead, so the
+# stop stays disarmed until the tight pair has read at least this much gap
+# during the leg. Blinded sensors never arm -> odometry backstop (no re-anchor).
+BENCHMARK_FAR_WALL_ARM_CM = 80.0
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0 - 15   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
@@ -294,7 +302,12 @@ BENCHMARK_REVERSE_SPEED = SLOW_SPEED  # reverse duty on the way home
 # Fixed mechanical trim while reversing (cf. FORWARD_STEER_TRIM below).
 # Tune on a long straight reverse if it drifts.
 REVERSE_STEER_TRIM = 0.0
-BACK_STOP_DISTANCE_CM = 25.0          # rear gap to the start wall that ends the reverse leg
+BACK_STOP_DISTANCE_CM = 35.0          # rear gap to the start wall that ends the reverse leg.
+                                      # 35 not 25: reverse dead reckoning under-counts on the
+                                      # downhill (2026-07-14 14:36 run: wall at 9 cm while
+                                      # believed y was still 104), so the odometry backstop
+                                      # never fires and the rear sensors only report when
+                                      # already close -- stop at the first trusted sighting.
 BACK_AGREE_TOL_CM = FRONT_AGREE_TOL_CM  # back pair must agree within this to be the wall
 BACK_AGREE_MIN_COUNT = 1              # ONE back sensor is enough: back_right read null for an
                                       # entire run (2026-07-14) and requiring both meant the rear
