@@ -171,16 +171,18 @@ class NavigationController:
 
     @property
     def wants_climb_shovel(self):
-        """Raised scoop: slopes, return legs, and lateral lane shifts."""
+        """Intermediate scoop height for climbing the slope."""
         if not getattr(self.cfg, "HILL_MODE", False):
             return False
-        if self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND):
-            return True
-        if self._benchmark_mode() and self.phase is Phase.BENCHMARK_RETURN:
-            return True
-        if self.phase is Phase.BENCHMARK_ALIGN_PIT:
-            return True
-        return False
+        return self.phase is Phase.CLIMB_FIRST
+
+    @property
+    def wants_full_up_shovel(self):
+        """Scoop fully raised: descending and homeward return legs."""
+        if not getattr(self.cfg, "HILL_MODE", False):
+            return False
+        return self.phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN,
+                              Phase.BENCHMARK_ALIGN_PIT)
 
     def note_blocking_maneuver(self):
         """Call after a blocking U-turn / dispose so the next tick does not odometry-bridge a long gap."""
@@ -401,13 +403,11 @@ class NavigationController:
     def _benchmark_return(self, readings):
         """Drive centre line home (heading 180); dump at the start wall."""
         cfg = self.cfg
-        need = getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)
         end_dist, end_agree = self._lane_end_wall(readings)
         at_wall = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
         if at_wall:
-            if (self.collector.count >= need
-                    and self._benchmark_near_start_wall()):
+            if self._benchmark_near_start_wall():
                 self.phase = Phase.BENCHMARK_ALIGN_PIT
                 self.mode = Mode.DISPOSING
                 print(f"[benchmark] start wall (y={self.y:.0f}, "
@@ -415,6 +415,14 @@ class NavigationController:
                       f"blocks={self.collector.count}) -> align pit")
                 return self._remember(Command(
                     Action.ALIGN_PIT, reason="benchmark align pit center"))
+            heading_ok = (not self._has_heading
+                            or abs(angle_diff(self.heading_rel, 180.0))
+                            <= getattr(cfg, "ORIENT_SKIP_DEG", 15.0))
+            if not heading_ok:
+                self.mode = Mode.TURNING
+                return self._remember(Command(
+                    Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
+                    reason=f"benchmark return re-orient (wall {end_dist:.0f}cm)"))
             return self._remember(Command(
                 Action.STOP, reason=f"benchmark return wall {end_dist:.0f}cm",
                 wall_stop=True))

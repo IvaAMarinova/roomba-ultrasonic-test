@@ -199,10 +199,7 @@ def _advance_one_lane(logger, motors, cfg, front_servo=None, nav=None):
     time.sleep(cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S)
     motors.stop(logger)
     if front_servo is not None and nav is not None:
-        if nav.wants_climb_shovel:
-            front_servo.climb()
-        elif nav.collecting:
-            front_servo.lower()
+        _sync_shovel_height(front_servo, nav)
 
 
 def _lane_turn_left(logger, motors, cfg, imu, nav, front_servo=None):
@@ -484,12 +481,6 @@ def _wall_stop_lift(logger, motors, front_servo, cmd, cfg=None):
     if not cmd.wall_stop or front_servo is None:
         return
     motors.stop(logger)
-    # Far-wall turnaround: pause at the wall but keep scoop out of a collect cycle.
-    if (cfg is not None and getattr(cfg, "HILL_BENCHMARK_MODE", False)
-            and cmd.action in (Action.FACE_HEADING, Action.ALIGN_CENTER)
-            and cmd.face_heading == 180.0):
-        logger.log("wall_stop", step="pause", reason=cmd.reason)
-        return
     logger.log("wall_stop", step="lift_cycle", reason=cmd.reason)
     front_servo.lift_cycle()
 
@@ -506,14 +497,20 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
         nav.complete_face_heading(cmd.face_heading)
-        if front_servo is not None and nav.wants_climb_shovel:
-            front_servo.climb()
+        _sync_shovel_height(front_servo, nav)
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
         _u_turn(logger, motors, cfg, direction, imu, nav, front_servo)
     elif cmd.action is Action.ALIGN_CENTER:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
+        if (getattr(cfg, "HILL_BENCHMARK_MODE", False) and cmd.face_heading == 180.0
+                and cmd.wall_stop
+                and nav.collector.count
+                < getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)):
+            nav.collector.add(1)
+            logger.log("benchmark", step="collect_at_far_wall",
+                       count=nav.collector.count)
         if sensors is None:
             logger.log("wall_align", step="skip", reason="no sensors")
             if cmd.face_heading is not None:
@@ -525,8 +522,7 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
             print(f"[align] -> face {cmd.face_heading:.0f}°")
             _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
             nav.complete_align_center(cmd.face_heading)
-            if front_servo is not None and nav.wants_climb_shovel:
-                front_servo.climb()
+            _sync_shovel_height(front_servo, nav)
     elif cmd.action is Action.ALIGN_PIT:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         if sensors is None:
@@ -581,6 +577,18 @@ def run_drive_test(logger, motors, cfg, imu=None):
     motors.stop(logger)
 
 
+def _sync_shovel_height(front_servo, nav):
+    """Set scoop to the height required by the current hill phase."""
+    if front_servo is None:
+        return
+    if nav.wants_full_up_shovel:
+        front_servo.raise_up()
+    elif nav.wants_climb_shovel:
+        front_servo.climb()
+    elif nav.collecting:
+        front_servo.lower()
+
+
 def _sync_shovel(front_servo, nav, last_phase):
     """Move the scoop when the hill phase changes."""
     if front_servo is None or not getattr(nav.cfg, "HILL_MODE", False):
@@ -591,7 +599,7 @@ def _sync_shovel(front_servo, nav, last_phase):
     if phase is Phase.CLIMB_FIRST:
         front_servo.climb()
     elif phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN, Phase.BENCHMARK_ALIGN_PIT):
-        front_servo.climb()
+        front_servo.raise_up()
     elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
                    Phase.APPROACH_HILL_CENTER, Phase.BENCHMARK_OUT):
         front_servo.lower()

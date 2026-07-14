@@ -736,7 +736,7 @@ def test_benchmark_collecting_on_flat():
     assert n.collecting
     n.phase = Phase.BENCHMARK_RETURN
     assert not n.collecting
-    assert n.wants_climb_shovel
+    assert n.wants_full_up_shovel
     n.phase = Phase.CLIMB_FIRST
     assert not n.collecting
     assert n.wants_climb_shovel
@@ -772,9 +772,22 @@ def test_benchmark_far_wall_does_not_align_pit():
     n.collector.add(1)
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=2.0, dt=0.0)
-    assert cmd.action is Action.STOP
-    assert cmd.wall_stop
+    assert cmd.action is Action.FACE_HEADING
+    assert cmd.face_heading == 180.0
     assert n.phase is Phase.BENCHMARK_RETURN
+
+
+def test_benchmark_return_aligns_pit_with_zero_blocks():
+    """At the start wall we align and dump even if the stub count is still 0."""
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
+    n.phase = Phase.BENCHMARK_RETURN
+    n.target_heading = 180.0
+    n._return_origin_y = config.ARENA_LENGTH_CM - config.FRONT_STOP_DISTANCE_CM
+    n.lane_distance = 95.0
+    n.y = 82.0
+    cmd = n.decide(front_wall(35.0), yaw=-179.0, dt=0.0)
+    assert cmd.action is Action.ALIGN_PIT
+    assert n.phase is Phase.BENCHMARK_ALIGN_PIT
 
 
 def test_benchmark_return_stops_at_wall_when_y_lags():
