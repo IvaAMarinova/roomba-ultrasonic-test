@@ -760,8 +760,24 @@ def test_benchmark_far_wall_does_not_align_pit():
     n.collector.add(1)
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=2.0, dt=0.0)
-    assert cmd.action is Action.FORWARD
+    assert cmd.action is Action.STOP
+    assert cmd.wall_stop
     assert n.phase is Phase.BENCHMARK_RETURN
+
+
+def test_benchmark_return_stops_at_wall_when_y_lags():
+    """Front wall within standoff must stop/align even if pose y is still high."""
+    cfg = hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1)
+    n = nav(cfg)
+    n.phase = Phase.BENCHMARK_RETURN
+    n.target_heading = 180.0
+    n._return_origin_y = cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM
+    n.y = 93.0
+    n.lane_distance = 81.0
+    n.collector.add(1)
+    cmd = n.decide(front_wall(16.0), yaw=176.0, dt=0.0)
+    assert cmd.action is Action.ALIGN_PIT
+    assert n.phase is Phase.BENCHMARK_ALIGN_PIT
 
 
 def test_benchmark_return_aligns_pit_with_one_block():

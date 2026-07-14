@@ -368,12 +368,16 @@ class NavigationController:
                                 hold_heading=False)
 
     def _benchmark_near_start_wall(self):
-        """True when pose says we are at the start wall, not still at the far end."""
+        """True when we are at the start wall, not still parked at the far end."""
         cfg = self.cfg
         if abs(angle_diff(self.target_heading, 180.0)) > 15.0:
             return False
         start_y_max = cfg.FRONT_STOP_DISTANCE_CM + 15.0
-        return self.y <= start_y_max
+        if self.y <= start_y_max:
+            return True
+        # Pose y can lag on the return leg; after enough homeward travel, trust sensors.
+        min_return = getattr(cfg, "BENCHMARK_MIN_RETURN_CM", 55.0)
+        return self.lane_distance >= min_return
 
     def _benchmark_return(self, readings):
         """Drive centre line home (heading 180); dump at the start wall."""
@@ -382,14 +386,19 @@ class NavigationController:
         end_dist, end_agree = self._lane_end_wall(readings)
         at_wall = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
-        if (at_wall and self.collector.count >= need
-                and self._benchmark_near_start_wall()):
-            self.phase = Phase.BENCHMARK_ALIGN_PIT
-            self.mode = Mode.DISPOSING
-            print(f"[benchmark] start wall (y={self.y:.0f}, "
-                  f"blocks={self.collector.count}) -> align pit")
+        if at_wall:
+            if (self.collector.count >= need
+                    and self._benchmark_near_start_wall()):
+                self.phase = Phase.BENCHMARK_ALIGN_PIT
+                self.mode = Mode.DISPOSING
+                print(f"[benchmark] start wall (y={self.y:.0f}, "
+                      f"ld={self.lane_distance:.0f}, "
+                      f"blocks={self.collector.count}) -> align pit")
+                return self._remember(Command(
+                    Action.ALIGN_PIT, reason="benchmark align pit center"))
             return self._remember(Command(
-                Action.ALIGN_PIT, reason="benchmark align pit center"))
+                Action.STOP, reason=f"benchmark return wall {end_dist:.0f}cm",
+                wall_stop=True))
         return self._cmd_cruise(readings, reason="benchmark: return home",
                                 hold_heading=True)
 
