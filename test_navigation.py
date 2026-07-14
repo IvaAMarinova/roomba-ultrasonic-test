@@ -748,16 +748,35 @@ def test_benchmark_return_holds_heading_gently():
     assert abs(cmd.steer) <= 0.15
 
 
+def test_benchmark_far_wall_does_not_align_pit():
+    """Close front wall at the far end must not trigger pit alignment."""
+    cfg = hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1)
+    n = nav(cfg)
+    n.phase = Phase.BENCHMARK_RETURN
+    n.target_heading = 180.0
+    n._return_origin_y = cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM
+    n.y = n._return_origin_y
+    n.lane_distance = 0.0
+    n.collector.add(1)
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=2.0, dt=0.0)
+    assert cmd.action is Action.FORWARD
+    assert n.phase is Phase.BENCHMARK_RETURN
+
+
 def test_benchmark_return_aligns_pit_with_one_block():
     n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
     n.phase = Phase.BENCHMARK_RETURN
     n.target_heading = 180.0
+    n._return_origin_y = config.ARENA_LENGTH_CM - config.FRONT_STOP_DISTANCE_CM
+    n.lane_distance = n._return_origin_y - config.FRONT_STOP_DISTANCE_CM
     n.collector.add(1)
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=180.0, dt=0.0)
     assert cmd.action is Action.ALIGN_PIT
     assert n.phase is Phase.BENCHMARK_ALIGN_PIT
     assert n.mode is Mode.DISPOSING
+    assert n.y <= config.FRONT_STOP_DISTANCE_CM + 15.0
 
 
 def _run():

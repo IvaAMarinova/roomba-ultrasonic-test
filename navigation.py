@@ -130,6 +130,7 @@ class NavigationController:
 
         # Pit hysteresis: once we dump we don't re-trigger until we leave the zone.
         self._pit_handled = False
+        self._return_origin_y = None   # y at far wall when benchmark return begins
 
         # Coverage: once the last lane (NUM_LANES-1) is finished, we're done.
         self._done = False
@@ -357,6 +358,7 @@ class NavigationController:
             self._reanchor_lane_from_wall(end_dist)
             self.phase = Phase.BENCHMARK_RETURN
             self.lane_distance = 0.0
+            self._return_origin_y = self.y
             self.target_heading = 180.0
             print(f"[benchmark] far wall (y={self.y:.0f}) -> turn 180, return")
             return self._remember(Command(
@@ -365,6 +367,14 @@ class NavigationController:
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
 
+    def _benchmark_near_start_wall(self):
+        """True when pose says we are at the start wall, not still at the far end."""
+        cfg = self.cfg
+        if abs(angle_diff(self.target_heading, 180.0)) > 15.0:
+            return False
+        start_y_max = cfg.FRONT_STOP_DISTANCE_CM + 15.0
+        return self.y <= start_y_max
+
     def _benchmark_return(self, readings):
         """Drive centre line home (heading 180); dump at the start wall."""
         cfg = self.cfg
@@ -372,7 +382,8 @@ class NavigationController:
         end_dist, end_agree = self._lane_end_wall(readings)
         at_wall = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
-        if at_wall and self.collector.count >= need:
+        if (at_wall and self.collector.count >= need
+                and self._benchmark_near_start_wall()):
             self.phase = Phase.BENCHMARK_ALIGN_PIT
             self.mode = Mode.DISPOSING
             print(f"[benchmark] start wall (y={self.y:.0f}, "
@@ -760,6 +771,11 @@ class NavigationController:
 
         if self._is_transverse_sweep() or self._heading_is_across():
             self._sync_lateral_pose()
+        elif (self.phase is Phase.BENCHMARK_RETURN
+              and self._return_origin_y is not None
+              and abs(angle_diff(self.target_heading, 180.0)) <= 15.0):
+            self.y = max(cfg.START_Y_CM,
+                         self._return_origin_y - self.lane_distance)
         else:
             forward = math.cos(math.radians(self.target_heading)) >= 0.0
             self.y = (cfg.START_Y_CM + self.lane_distance if forward
