@@ -785,8 +785,8 @@ def test_benchmark_far_wall_does_not_align_pit():
     n.collector.add(1)
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=2.0, dt=0.0)
-    assert cmd.action is Action.STOP
-    assert cmd.wall_stop
+    assert cmd.action is Action.FORWARD
+    assert "leave far wall" in cmd.reason
     assert n.phase is Phase.BENCHMARK_RETURN
 
 

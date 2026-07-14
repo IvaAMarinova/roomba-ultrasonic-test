@@ -420,6 +420,17 @@ class NavigationController:
         min_return = getattr(cfg, "BENCHMARK_MIN_RETURN_CM", 55.0)
         return self.lane_distance >= min_return
 
+    def _benchmark_still_at_far_wall(self):
+        """True while still nose-on at the far wall we just arrived at."""
+        cfg = self.cfg
+        min_return = getattr(cfg, "BENCHMARK_MIN_RETURN_CM", 55.0)
+        if self.lane_distance >= min_return:
+            return False
+        origin = self._return_origin_y
+        if origin is not None:
+            return self.y >= origin - cfg.FRONT_STOP_DISTANCE_CM
+        return self.y > cfg.HILL_TOP_Y_CM + min_return
+
     def _benchmark_return(self, readings):
         """Drive centre line home (heading 180); dump at the start wall."""
         cfg = self.cfg
@@ -435,6 +446,9 @@ class NavigationController:
                       f"blocks={self.collector.count}) -> align pit")
                 return self._remember(Command(
                     Action.ALIGN_PIT, reason="benchmark align pit center"))
+            if self._benchmark_still_at_far_wall():
+                return self._cmd_return_cruise(
+                    readings, reason="benchmark: leave far wall")
             return self._remember(Command(
                 Action.STOP, reason=f"benchmark return wall {end_dist:.0f}cm",
                 wall_stop=True))
