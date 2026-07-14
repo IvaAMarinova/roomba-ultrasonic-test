@@ -364,12 +364,49 @@ class NavigationController:
             self.lane_distance = 0.0
             self._return_origin_y = self.y
             self.target_heading = 180.0
-            print(f"[benchmark] far wall (y={self.y:.0f}) -> turn 180, return")
+            self.note_blocking_maneuver()
+            print(f"[benchmark] far wall (y={self.y:.0f}) -> steer home downhill")
             return self._remember(Command(
-                Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
-                reason=f"benchmark far wall {end_dist:.0f}cm"))
+                Action.STOP, reason=f"benchmark far wall {end_dist:.0f}cm",
+                wall_stop=True))
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
+
+    def _return_heading_error(self):
+        if not self._has_heading:
+            return 0.0
+        return angle_diff(self.target_heading, self.heading_rel)
+
+    def _return_steer_trim(self, err):
+        """Steer trim for benchmark return: stronger while still turning toward 180°."""
+        cfg = self.cfg
+        misaligned = abs(err) > cfg.ORIENT_SKIP_DEG
+        if misaligned:
+            deadband = getattr(cfg, "RETURN_ALIGN_DEADBAND_DEG", 2.0)
+            gain = getattr(cfg, "RETURN_ALIGN_GAIN", 0.025)
+            max_trim = getattr(cfg, "RETURN_ALIGN_MAX_TRIM", 0.25)
+        else:
+            deadband = getattr(cfg, "RETURN_HEADING_DEADBAND_DEG", 6.0)
+            gain = getattr(cfg, "RETURN_HEADING_HOLD_GAIN", 0.01)
+            max_trim = getattr(cfg, "RETURN_MAX_HEADING_TRIM", 0.15)
+        if abs(err) <= deadband:
+            return 0.0
+        trim = -gain * err
+        return max(-max_trim, min(max_trim, trim))
+
+    def _cmd_return_cruise(self, readings, reason=""):
+        """Benchmark homeward leg: creep and steer toward 180° on the slope."""
+        cfg = self.cfg
+        self.mode = Mode.DRIVING
+        err = self._return_heading_error()
+        misaligned = abs(err) > cfg.ORIENT_SKIP_DEG
+        on_slope = self.y > cfg.HILL_TOP_Y_CM
+        speed = cfg.SLOW_SPEED
+        if misaligned or on_slope:
+            speed = getattr(cfg, "RETURN_ALIGN_SPEED", cfg.SLOW_SPEED * 0.5)
+        steer = self._return_steer_trim(err)
+        return self._remember(Command(
+            Action.FORWARD, speed=speed, steer=steer, reason=reason))
 
     def _benchmark_near_start_wall(self):
         """True when we are at the start wall, not still parked at the far end."""
@@ -401,8 +438,7 @@ class NavigationController:
             return self._remember(Command(
                 Action.STOP, reason=f"benchmark return wall {end_dist:.0f}cm",
                 wall_stop=True))
-        return self._cmd_cruise(readings, reason="benchmark: return home",
-                                hold_heading=True)
+        return self._cmd_return_cruise(readings, reason="benchmark: return home")
 
     def _hill_wall_then_spin_left(self, readings):
         """Drive until front sensors see the wall, then spin 90 deg left.
@@ -907,13 +943,10 @@ class NavigationController:
             return 0.0
         err = angle_diff(self.target_heading, self.heading_rel)
         if self.phase is Phase.BENCHMARK_RETURN:
-            deadband = getattr(cfg, "RETURN_HEADING_DEADBAND_DEG", 6.0)
-            gain = getattr(cfg, "RETURN_HEADING_HOLD_GAIN", 0.01)
-            max_trim = getattr(cfg, "RETURN_MAX_HEADING_TRIM", 0.15)
-        else:
-            deadband = getattr(cfg, "HEADING_HOLD_DEADBAND_DEG", 0.0)
-            gain = cfg.HEADING_HOLD_GAIN
-            max_trim = cfg.MAX_HEADING_TRIM
+            return self._return_steer_trim(err)
+        deadband = getattr(cfg, "HEADING_HOLD_DEADBAND_DEG", 0.0)
+        gain = cfg.HEADING_HOLD_GAIN
+        max_trim = cfg.MAX_HEADING_TRIM
         if abs(err) <= deadband:
             return 0.0
         # Sign matches _drive_to_wall in main.py and this rover's IMU/motor frame.

@@ -538,6 +538,15 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _dispose(logger, motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
+        if cmd.wall_stop:
+            _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
+            if (getattr(cfg, "HILL_BENCHMARK_MODE", False)
+                    and nav.phase is Phase.BENCHMARK_RETURN
+                    and nav.collector.count
+                    < getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)):
+                nav.collector.add(1)
+                logger.log("benchmark", step="collect_at_far_wall",
+                           count=nav.collector.count)
         motors.stop(logger)
 
 
@@ -628,7 +637,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     hill = getattr(cfg, "HILL_MODE", False)
     benchmark = getattr(cfg, "HILL_BENCHMARK_MODE", False)
     if hill and benchmark:
-        mode_label = ("benchmark: climb -> far wall -> 180 -> return "
+        mode_label = ("benchmark: climb -> far wall -> steer return "
                       "-> align pit -> dump "
                       f"(collect {getattr(cfg, 'BENCHMARK_COLLECT_BLOCKS', 1)} block)")
     elif hill:

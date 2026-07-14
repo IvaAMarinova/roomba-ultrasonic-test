@@ -705,15 +705,27 @@ def test_benchmark_climb_to_out():
     assert n.phase is Phase.BENCHMARK_OUT
 
 
-def test_benchmark_far_wall_turns_180():
+def test_benchmark_far_wall_starts_return():
     n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
     n.phase = Phase.BENCHMARK_OUT
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=0.0, dt=0.0)
-    assert cmd.action is Action.FACE_HEADING
-    assert cmd.face_heading == 180.0
+    assert cmd.action is Action.STOP
     assert cmd.wall_stop
     assert n.phase is Phase.BENCHMARK_RETURN
+    assert n.target_heading == 180.0
+
+
+def test_benchmark_return_steers_while_misaligned():
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
+    n.phase = Phase.BENCHMARK_RETURN
+    n.target_heading = 180.0
+    n.y = 80.0
+    cmd = n.decide(reading(), yaw=90.0, dt=0.1)
+    assert cmd.action is Action.FORWARD
+    assert cmd.speed == config.RETURN_ALIGN_SPEED
+    assert cmd.steer != 0.0
+    assert abs(cmd.steer) <= config.RETURN_ALIGN_MAX_TRIM
 
 
 def test_hill_far_wall_turns_left():
@@ -754,10 +766,11 @@ def test_benchmark_return_holds_heading_gently():
     n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
     n.phase = Phase.BENCHMARK_RETURN
     n.target_heading = 180.0
+    n.y = 10.0
     cmd = n.decide(reading(), yaw=165.0, dt=0.1)
     assert cmd.action is Action.FORWARD
     assert cmd.steer != 0.0
-    assert abs(cmd.steer) <= 0.15
+    assert abs(cmd.steer) <= config.RETURN_MAX_HEADING_TRIM
 
 
 def test_benchmark_far_wall_does_not_align_pit():
