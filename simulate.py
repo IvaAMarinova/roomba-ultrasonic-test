@@ -55,13 +55,17 @@ def main():
         front = gap if gap <= cfg.SENSOR_MAX_RANGE_CM else INF
         cmd = nav.decide(reading(front), yaw=heading, dt=dt)
 
-        extra = f" steer={cmd.steer:+.2f}" if cmd.action is Action.FORWARD else ""
+        extra = (f" steer={cmd.steer:+.2f}"
+                 if cmd.action in (Action.FORWARD, Action.REVERSE) else "")
         print(f"{step:3d} MODE={nav.mode.name:<9} {nav.pose_str()} "
               f"true_y={true_y:5.1f} -> {cmd.action.name:<10}{extra}  [{cmd.reason}]")
 
         if cmd.action is Action.FORWARD:
             step_cm = cfg.DRIVE_CM_PER_S * (cmd.speed / cfg.DRIVE_SPEED) * dt
             true_y += step_cm if forward else -step_cm
+        elif cmd.action is Action.REVERSE:
+            step_cm = cfg.DRIVE_CM_PER_S * (cmd.speed / cfg.DRIVE_SPEED) * dt
+            true_y += -step_cm if forward else step_cm
         elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
             nav.complete_turn()
             heading = nav.target_heading

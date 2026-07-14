@@ -48,9 +48,11 @@ class MotorDriver:
     # -- high-level intents -------------------------------------------------
 
     def drive(self, logger, speed, steer=0.0):
-        """Move forward at `speed`, biasing with `steer` (-1 left .. +1 right)."""
+        """Move at `speed` (signed: <0 = reverse), biasing with `steer` (-1 left .. +1 right)."""
         if speed > 0:
             steer += self.cfg.FORWARD_STEER_TRIM
+        elif speed < 0:
+            steer += getattr(self.cfg, "REVERSE_STEER_TRIM", 0.0)
         # Steering right slows the right side; steering left slows the left side.
         self._set_side(logger, "left", speed + steer)
         self._set_side(logger, "right", speed - steer)

@@ -49,6 +49,7 @@ def angle_diff(a, b):
 
 class Action(Enum):
     FORWARD = auto()
+    REVERSE = auto()         # back straight up (benchmark return home, no 180)
     TURN_LEFT = auto()
     TURN_RIGHT = auto()
     SPIN_LEFT = auto()       # 90 deg left only (hill: wall stop -> spin -> next leg)
@@ -76,7 +77,7 @@ class Phase(Enum):
     DESCEND = auto()
     ALIGN_AT_FAR_WALL = auto()   # blocking lateral align before turnaround at the far wall
     BENCHMARK_OUT = auto()       # flat: centre line to far wall, collecting
-    BENCHMARK_RETURN = auto()    # turn 180, return to start wall, dump
+    BENCHMARK_RETURN = auto()    # reverse straight back to the start wall (no 180)
     BENCHMARK_ALIGN_PIT = auto() # at start wall: face ±x, center with side sensors
 
 
@@ -90,7 +91,7 @@ class Command:
     """What the controller wants the car to do this tick."""
     action: Action
     speed: float = 0.0
-    steer: float = 0.0       # only used with FORWARD: -1 = full left .. +1 = full right
+    steer: float = 0.0       # FORWARD/REVERSE only: -1 = full left .. +1 = full right
     reason: str = ""         # human-readable explanation, handy for logs/tests
     wall_stop: bool = False    # pause + front scoop lift before this maneuver
     face_heading: Optional[float] = None  # for FACE_HEADING: start-relative target deg
@@ -133,6 +134,7 @@ class NavigationController:
         # Pit hysteresis: once we dump we don't re-trigger until we leave the zone.
         self._pit_handled = False
         self._return_origin_y = None   # y at far wall when benchmark return begins
+        self._rear_persist = 0         # consecutive ticks the rear wall-stop has held
         self._post_align_heading = None
         self._post_align_phase = None
 
@@ -187,6 +189,7 @@ class NavigationController:
         self._last_action = Action.STOP
         self._last_speed = 0.0
         self._wall_persist = 0
+        self._rear_persist = 0
         self.pos_source = "BRIDGE"
 
     # -- setup --------------------------------------------------------------
@@ -363,96 +366,93 @@ class NavigationController:
             self.phase = Phase.BENCHMARK_RETURN
             self.lane_distance = 0.0
             self._return_origin_y = self.y
-            self.target_heading = 180.0
+            self.target_heading = 0.0    # stay facing the far wall; reverse home
             self.note_blocking_maneuver()
-            print(f"[benchmark] far wall (y={self.y:.0f}) -> steer home downhill")
+            print(f"[benchmark] far wall (y={self.y:.0f}) -> reverse home (no 180)")
             return self._remember(Command(
                 Action.STOP, reason=f"benchmark far wall {end_dist:.0f}cm",
                 wall_stop=True))
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
 
-    def _return_heading_error(self):
+    def _reverse_steer_trim(self):
+        """IMU heading-hold while reversing.
+
+        Skid-steer yaw response to `steer` has the same sign in reverse as
+        forward (negating both wheel speeds leaves the wheel-speed difference's
+        sign unchanged), so the cruise trim formula carries over as-is.
+        """
+        cfg = self.cfg
         if not self._has_heading:
             return 0.0
-        return angle_diff(self.target_heading, self.heading_rel)
-
-    def _return_steer_trim(self, err):
-        """Steer trim for benchmark return: stronger while still turning toward 180°."""
-        cfg = self.cfg
-        misaligned = abs(err) > cfg.ORIENT_SKIP_DEG
-        if misaligned:
-            deadband = getattr(cfg, "RETURN_ALIGN_DEADBAND_DEG", 2.0)
-            gain = getattr(cfg, "RETURN_ALIGN_GAIN", 0.025)
-            max_trim = getattr(cfg, "RETURN_ALIGN_MAX_TRIM", 0.25)
-        else:
-            deadband = getattr(cfg, "RETURN_HEADING_DEADBAND_DEG", 6.0)
-            gain = getattr(cfg, "RETURN_HEADING_HOLD_GAIN", 0.01)
-            max_trim = getattr(cfg, "RETURN_MAX_HEADING_TRIM", 0.15)
+        err = angle_diff(self.target_heading, self.heading_rel)
+        deadband = getattr(cfg, "REVERSE_HEADING_DEADBAND_DEG", 2.0)
         if abs(err) <= deadband:
             return 0.0
+        gain = getattr(cfg, "REVERSE_HEADING_HOLD_GAIN", 0.02)
+        max_trim = getattr(cfg, "REVERSE_MAX_HEADING_TRIM", 0.2)
         trim = -gain * err
         return max(-max_trim, min(max_trim, trim))
 
-    def _cmd_return_cruise(self, readings, reason=""):
-        """Benchmark homeward leg: creep and steer toward 180° on the slope."""
+    def _cmd_reverse_cruise(self, reason=""):
+        """Back straight up at reverse speed, IMU trimming toward target_heading."""
         cfg = self.cfg
         self.mode = Mode.DRIVING
-        err = self._return_heading_error()
-        misaligned = abs(err) > cfg.ORIENT_SKIP_DEG
-        on_slope = self.y > cfg.HILL_TOP_Y_CM
-        speed = cfg.SLOW_SPEED
-        if misaligned or on_slope:
-            speed = getattr(cfg, "RETURN_ALIGN_SPEED", cfg.SLOW_SPEED * 0.5)
-        steer = self._return_steer_trim(err)
+        speed = getattr(cfg, "BENCHMARK_REVERSE_SPEED", cfg.SLOW_SPEED)
         return self._remember(Command(
-            Action.FORWARD, speed=speed, steer=steer, reason=reason))
+            Action.REVERSE, speed=speed, steer=self._reverse_steer_trim(),
+            reason=reason))
 
-    def _benchmark_near_start_wall(self):
-        """True when we are at the start wall, not still parked at the far end."""
+    def _rear_wall(self, readings):
+        """Distance to the wall behind + agreeing count, from the back sensors."""
         cfg = self.cfg
-        if abs(angle_diff(self.target_heading, 180.0)) > 15.0:
-            return False
-        start_y_max = cfg.FRONT_STOP_DISTANCE_CM + 15.0
-        if self.y <= start_y_max:
-            return True
-        # Pose y can lag on the return leg; after enough homeward travel, trust sensors.
-        min_return = getattr(cfg, "BENCHMARK_MIN_RETURN_CM", 55.0)
-        return self.lane_distance >= min_return
-
-    def _benchmark_still_at_far_wall(self):
-        """True while still nose-on at the far wall we just arrived at."""
-        cfg = self.cfg
-        min_return = getattr(cfg, "BENCHMARK_MIN_RETURN_CM", 55.0)
-        if self.lane_distance >= min_return:
-            return False
-        origin = self._return_origin_y
-        if origin is not None:
-            return self.y >= origin - cfg.FRONT_STOP_DISTANCE_CM
-        return self.y > cfg.HILL_TOP_Y_CM + min_return
+        finite = []
+        for name in getattr(cfg, "BACK_SENSORS", ()):
+            spec = cfg.SENSORS.get(name, {})
+            if not spec.get("enabled", True):
+                continue
+            d = readings.get(name, INF)
+            if d != INF:
+                finite.append(d)
+        min_count = getattr(cfg, "BACK_AGREE_MIN_COUNT", 2)
+        if len(finite) < min_count:
+            return INF, len(finite)
+        tol = getattr(cfg, "BACK_AGREE_TOL_CM", cfg.FRONT_AGREE_TOL_CM)
+        if max(finite) - min(finite) <= tol:
+            return statistics.median(finite), len(finite)
+        return INF, len(finite)
 
     def _benchmark_return(self, readings):
-        """Drive centre line home (heading 180); dump at the start wall."""
+        """Reverse straight home, nose still on the far wall, IMU holding heading 0.
+
+        No 180 turn: the back sensors watch for the start wall (K-of-2 agree,
+        held REAR_WALL_PERSIST_TICKS, only after BENCHMARK_MIN_RETURN_CM of
+        travel so junk at departure can't fire it), with odometry y as the
+        backstop if they never agree. Front readings are ignored here -- they
+        see the far wall, which is behind us in travel terms.
+        """
         cfg = self.cfg
-        end_dist, end_agree = self._lane_end_wall(readings)
-        at_wall = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
-                   and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
-        if at_wall:
-            if self._benchmark_near_start_wall():
-                self.phase = Phase.BENCHMARK_ALIGN_PIT
-                self.mode = Mode.DISPOSING
-                print(f"[benchmark] start wall (y={self.y:.0f}, "
-                      f"ld={self.lane_distance:.0f}, "
-                      f"blocks={self.collector.count}) -> align pit")
-                return self._remember(Command(
-                    Action.ALIGN_PIT, reason="benchmark align pit center"))
-            if self._benchmark_still_at_far_wall():
-                return self._cmd_return_cruise(
-                    readings, reason="benchmark: leave far wall")
+        rear_stop = getattr(cfg, "BACK_STOP_DISTANCE_CM", 25.0)
+        min_return = getattr(cfg, "BENCHMARK_MIN_RETURN_CM", 55.0)
+        rear_dist, rear_agree = self._rear_wall(readings)
+        rear_hold = (rear_agree >= getattr(cfg, "BACK_AGREE_MIN_COUNT", 2)
+                     and rear_dist <= rear_stop
+                     and self.lane_distance >= min_return)
+        self._rear_persist = self._rear_persist + 1 if rear_hold else 0
+        wall_home = (self._rear_persist
+                     >= getattr(cfg, "REAR_WALL_PERSIST_TICKS", 2))
+        odo_home = self.y <= rear_stop
+        if wall_home or odo_home:
+            src = (f"rear wall {rear_dist:.0f}cm (x{rear_agree} agree)"
+                   if wall_home else "odometry backstop")
+            self.phase = Phase.BENCHMARK_ALIGN_PIT
+            self.mode = Mode.DISPOSING
+            print(f"[benchmark] start wall ({src}, y={self.y:.0f}, "
+                  f"ld={self.lane_distance:.0f}, "
+                  f"blocks={self.collector.count}) -> align pit")
             return self._remember(Command(
-                Action.STOP, reason=f"benchmark return wall {end_dist:.0f}cm",
-                wall_stop=True))
-        return self._cmd_return_cruise(readings, reason="benchmark: return home")
+                Action.ALIGN_PIT, reason=f"benchmark align pit ({src})"))
+        return self._cmd_reverse_cruise(reason="benchmark: reverse home")
 
     def _hill_wall_then_spin_left(self, readings):
         """Drive until front sensors see the wall, then spin 90 deg left.
@@ -786,7 +786,9 @@ class NavigationController:
     def _remember(self, cmd):
         """Record the command so the next tick can integrate the motion it caused."""
         self._last_action = cmd.action
-        self._last_speed = cmd.speed if cmd.action is Action.FORWARD else 0.0
+        self._last_speed = (cmd.speed
+                            if cmd.action in (Action.FORWARD, Action.REVERSE)
+                            else 0.0)
         return cmd
 
     def _update_pose(self, readings, yaw, dt):
@@ -802,7 +804,9 @@ class NavigationController:
             dt = max_dt
 
         # Odometry accumulator: the bridge value + the "where's the wall" prior.
-        if (self._last_action is Action.FORWARD and dt > 0.0
+        # REVERSE (benchmark return) accumulates the same way -- lane_distance
+        # there means "cm travelled backward from the far wall".
+        if (self._last_action in (Action.FORWARD, Action.REVERSE) and dt > 0.0
                 and cfg.DRIVE_SPEED > 0.0):
             self.lane_distance += (cfg.DRIVE_CM_PER_S
                                    * (self._last_speed / cfg.DRIVE_SPEED) * dt)
@@ -844,8 +848,9 @@ class NavigationController:
         if self._is_transverse_sweep() or self._heading_is_across():
             self._sync_lateral_pose()
         elif (self.phase is Phase.BENCHMARK_RETURN
-              and self._return_origin_y is not None
-              and abs(angle_diff(self.target_heading, 180.0)) <= 15.0):
+              and self._return_origin_y is not None):
+            # Reversing home while still facing the far wall (target heading 0):
+            # lane_distance counts backward travel, so y shrinks from the origin.
             self.y = max(cfg.START_Y_CM,
                          self._return_origin_y - self.lane_distance)
         else:
@@ -944,7 +949,7 @@ class NavigationController:
         step = angle_diff(raw, self._prev_heading_rel)
         max_step = getattr(cfg, "IMU_GLITCH_MAX_STEP_DEG", 45.0)
         cruising = (self.mode is Mode.DRIVING
-                    and self._last_action is Action.FORWARD)
+                    and self._last_action in (Action.FORWARD, Action.REVERSE))
         if cruising and abs(step) > max_step:
             return
         self.heading_rel = raw
@@ -956,8 +961,6 @@ class NavigationController:
         if not self._has_heading:
             return 0.0
         err = angle_diff(self.target_heading, self.heading_rel)
-        if self.phase is Phase.BENCHMARK_RETURN:
-            return self._return_steer_trim(err)
         deadband = getattr(cfg, "HEADING_HOLD_DEADBAND_DEG", 0.0)
         gain = cfg.HEADING_HOLD_GAIN
         max_trim = cfg.MAX_HEADING_TRIM

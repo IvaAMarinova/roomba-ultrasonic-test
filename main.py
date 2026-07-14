@@ -489,6 +489,11 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
             sensors=None, period=0.05):
     if cmd.action is Action.FORWARD:
         motors.drive(logger, cmd.speed, cmd.steer)
+    elif cmd.action is Action.REVERSE:
+        # Negative speed = backward; steer keeps its forward sense (skid-steer
+        # yaw response to steer is direction-independent), so the IMU trim
+        # computed by the controller applies unchanged.
+        motors.drive(logger, -cmd.speed, cmd.steer)
     elif cmd.action is Action.SPIN_LEFT:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _spin_90(logger, motors, cfg, "left", imu)
@@ -637,8 +642,8 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     hill = getattr(cfg, "HILL_MODE", False)
     benchmark = getattr(cfg, "HILL_BENCHMARK_MODE", False)
     if hill and benchmark:
-        mode_label = ("benchmark: climb -> far wall -> steer return "
-                      "-> align pit -> dump "
+        mode_label = ("benchmark: climb -> far wall -> reverse home (no 180, "
+                      "IMU-held) -> align pit -> dump "
                       f"(collect {getattr(cfg, 'BENCHMARK_COLLECT_BLOCKS', 1)} block)")
     elif hill:
         mode_label = "hill: wall stop -> spin left -> sideways sweep -> dump"
@@ -686,7 +691,8 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo,
                     sensors=sensors, period=period)
 
-            if cmd.action is not Action.FORWARD or cmd.wall_stop:
+            if (cmd.action not in (Action.FORWARD, Action.REVERSE)
+                    or cmd.wall_stop):
                 last_t = time.monotonic()   # dispose / turn / wall lift blocked -- drop stale dt
                 if cmd.wall_stop:
                     drive_elapsed = 0.0

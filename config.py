@@ -41,13 +41,15 @@ HILL_SWEEP_NUM_LANES = math.ceil(HILL_SWEEP_HALF_Y_CM / LANE_WIDTH_CM)
 # Climbing/descending the slope is much easier in the centre of the hill.
 # Set HILL_MODE = False to restore the old full-arena serpentine + mid-sweep pit.
 # HILL_BENCHMARK_MODE = True skips the sideways sweep: climb -> far wall ->
-# turn 180 -> return -> dump (collect BENCHMARK_COLLECT_BLOCKS on the flat).
+# REVERSE straight home (no 180 -- the IMU holds heading 0 while backing up and
+# the BACK sensors stop at the start wall) -> dump (collect
+# BENCHMARK_COLLECT_BLOCKS on the flat).
 # ---------------------------------------------------------------------------
 HILL_MODE = True
 HILL_BENCHMARK_MODE = True
 BENCHMARK_COLLECT_BLOCKS = 1
 BENCHMARK_LIFT_INTERVAL_S = 4.0   # stop + scoop this often on the flat (benchmark outbound)
-BENCHMARK_MIN_RETURN_CM = 55.0   # return leg travel before a front wall stop counts as home
+BENCHMARK_MIN_RETURN_CM = 55.0   # reverse travel before a rear wall stop counts as home
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
@@ -275,16 +277,22 @@ HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
 MAX_HEADING_TRIM = 0.0            # clamp on the heading-hold steering trim
 HEADING_HOLD_DEADBAND_DEG = 4.0   # ignore smaller errors (stops IMU weave)
 
-# Gentler heading-hold on benchmark return once aligned (correct drift without weave).
-RETURN_HEADING_HOLD_GAIN = 0.01
-RETURN_MAX_HEADING_TRIM = 0.15
-RETURN_HEADING_DEADBAND_DEG = 6.0
-
-# Benchmark return: steer toward 180° while creeping downhill (no blocking spin).
-RETURN_ALIGN_SPEED = 0.05          # slow forward while turning around on the slope
-RETURN_ALIGN_GAIN = 0.025        # stronger steer when still misaligned vs target
-RETURN_ALIGN_MAX_TRIM = 0.25       # cap while drive-steering toward 180°
-RETURN_ALIGN_DEADBAND_DEG = 2.0    # start correcting early on the return leg
+# Benchmark return: NO 180 turn. From the far wall the car REVERSES straight
+# back to the start, nose still facing the far wall, while the IMU holds heading
+# 0 (skid-steer yaw response to `steer` is the same sign in reverse, so the same
+# trim law applies). The two BACK sensors end the leg at the start wall; the
+# dead-reckoned y is the backstop if they never agree.
+BENCHMARK_REVERSE_SPEED = SLOW_SPEED  # reverse duty on the way home
+REVERSE_HEADING_HOLD_GAIN = 0.02      # steer trim per degree of heading error (reversing)
+REVERSE_MAX_HEADING_TRIM = 0.2        # clamp on the reversing heading-hold trim
+REVERSE_HEADING_DEADBAND_DEG = 2.0    # ignore smaller errors while reversing
+# Fixed mechanical trim while reversing (cf. FORWARD_STEER_TRIM below); the IMU
+# heading-hold corrects the rest. Tune on a long straight reverse if it drifts.
+REVERSE_STEER_TRIM = 0.0
+BACK_STOP_DISTANCE_CM = 25.0          # rear gap to the start wall that ends the reverse leg
+BACK_AGREE_TOL_CM = FRONT_AGREE_TOL_CM  # back pair must agree within this to be the wall
+BACK_AGREE_MIN_COUNT = 2              # both back sensors must see it
+REAR_WALL_PERSIST_TICKS = 2           # consecutive ticks before trusting the rear wall stop
 
 # Fixed mechanical trim on forward drives (no IMU). Compensates for uneven
 # wheels/motors after wear. Positive = nudge right (corrects left drift).

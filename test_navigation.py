@@ -713,19 +713,43 @@ def test_benchmark_far_wall_starts_return():
     assert cmd.action is Action.STOP
     assert cmd.wall_stop
     assert n.phase is Phase.BENCHMARK_RETURN
-    assert n.target_heading == 180.0
+    assert n.target_heading == 0.0     # no 180: stay facing the far wall
 
 
-def test_benchmark_return_steers_while_misaligned():
-    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
+def _return_nav(cfg=None, origin_y=200.0, lane_distance=0.0):
+    """A controller mid benchmark-return (reversing home, facing the far wall)."""
+    n = nav(cfg if cfg is not None else hill_cfg(HILL_BENCHMARK_MODE=True))
     n.phase = Phase.BENCHMARK_RETURN
-    n.target_heading = 180.0
-    n.y = 80.0
-    cmd = n.decide(reading(), yaw=90.0, dt=0.1)
-    assert cmd.action is Action.FORWARD
-    assert cmd.speed == config.RETURN_ALIGN_SPEED
-    assert cmd.steer != 0.0
-    assert abs(cmd.steer) <= config.RETURN_ALIGN_MAX_TRIM
+    n.target_heading = 0.0
+    n._return_origin_y = origin_y
+    n.lane_distance = lane_distance
+    n.y = max(0.0, origin_y - lane_distance)
+    return n
+
+
+def test_benchmark_return_reverses():
+    n = _return_nav()
+    cmd = n.decide(reading(), yaw=0.0, dt=0.1)
+    assert cmd.action is Action.REVERSE
+    assert cmd.speed == config.BENCHMARK_REVERSE_SPEED
+    assert cmd.steer == 0.0
+
+
+def test_benchmark_return_imu_trims_heading():
+    n = _return_nav()
+    cmd = n.decide(reading(), yaw=10.0, dt=0.1)
+    assert cmd.action is Action.REVERSE
+    assert cmd.steer > 0.0             # same trim sense as forward heading-hold
+    assert abs(cmd.steer) <= config.REVERSE_MAX_HEADING_TRIM
+    cmd = n.decide(reading(), yaw=-10.0, dt=0.1)
+    assert cmd.steer < 0.0
+
+
+def test_benchmark_return_deadband_reverses_straight():
+    n = _return_nav()
+    cmd = n.decide(reading(), yaw=1.0, dt=0.1)
+    assert cmd.action is Action.REVERSE
+    assert cmd.steer == 0.0
 
 
 def test_hill_far_wall_turns_left():
@@ -762,75 +786,57 @@ def test_benchmark_out_drives_straight():
     assert cmd.steer == 0.0
 
 
-def test_benchmark_return_holds_heading_gently():
-    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
-    n.phase = Phase.BENCHMARK_RETURN
-    n.target_heading = 180.0
-    n.y = 10.0
-    cmd = n.decide(reading(), yaw=165.0, dt=0.1)
-    assert cmd.action is Action.FORWARD
-    assert cmd.steer != 0.0
-    assert abs(cmd.steer) <= config.RETURN_MAX_HEADING_TRIM
-
-
-def test_benchmark_far_wall_does_not_align_pit():
-    """Close front wall at the far end must not trigger pit alignment."""
+def test_benchmark_far_wall_reading_does_not_align_pit():
+    """A close FRONT wall (the far wall we're leaving) must not end the return."""
     cfg = hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1)
-    n = nav(cfg)
-    n.phase = Phase.BENCHMARK_RETURN
-    n.target_heading = 180.0
-    n._return_origin_y = cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM
-    n.y = n._return_origin_y
-    n.lane_distance = 0.0
+    n = _return_nav(cfg, origin_y=cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM)
     n.collector.add(1)
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=2.0, dt=0.0)
-    assert cmd.action is Action.FORWARD
-    assert "leave far wall" in cmd.reason
+    assert cmd.action is Action.REVERSE
     assert n.phase is Phase.BENCHMARK_RETURN
 
 
-def test_benchmark_return_aligns_pit_with_zero_blocks():
-    """At the start wall we align and dump even if the stub count is still 0."""
-    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
-    n.phase = Phase.BENCHMARK_RETURN
-    n.target_heading = 180.0
-    n._return_origin_y = config.ARENA_LENGTH_CM - config.FRONT_STOP_DISTANCE_CM
-    n.lane_distance = 95.0
-    n.y = 82.0
-    cmd = n.decide(front_wall(35.0), yaw=-179.0, dt=0.0)
-    assert cmd.action is Action.ALIGN_PIT
-    assert n.phase is Phase.BENCHMARK_ALIGN_PIT
-
-
-def test_benchmark_return_stops_at_wall_when_y_lags():
-    """Front wall within standoff must stop/align even if pose y is still high."""
-    cfg = hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1)
-    n = nav(cfg)
-    n.phase = Phase.BENCHMARK_RETURN
-    n.target_heading = 180.0
-    n._return_origin_y = cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM
-    n.y = 93.0
-    n.lane_distance = 81.0
+def test_benchmark_return_rear_wall_aligns_pit():
+    """Both back sensors agreeing on a close wall (persisted) ends the return."""
+    n = _return_nav(lane_distance=140.0)
     n.collector.add(1)
-    cmd = n.decide(front_wall(16.0), yaw=176.0, dt=0.0)
-    assert cmd.action is Action.ALIGN_PIT
-    assert n.phase is Phase.BENCHMARK_ALIGN_PIT
-
-
-def test_benchmark_return_aligns_pit_with_one_block():
-    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
-    n.phase = Phase.BENCHMARK_RETURN
-    n.target_heading = 180.0
-    n._return_origin_y = config.ARENA_LENGTH_CM - config.FRONT_STOP_DISTANCE_CM
-    n.lane_distance = n._return_origin_y - config.FRONT_STOP_DISTANCE_CM
-    n.collector.add(1)
-    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
-                   yaw=180.0, dt=0.0)
+    at_wall = reading(back_left=20.0, back_right=22.0)
+    cmd = n.decide(at_wall, yaw=0.0, dt=0.0)
+    assert cmd.action is Action.REVERSE      # 1st tick: persistence not yet met
+    cmd = n.decide(at_wall, yaw=0.0, dt=0.0)
     assert cmd.action is Action.ALIGN_PIT
     assert n.phase is Phase.BENCHMARK_ALIGN_PIT
     assert n.mode is Mode.DISPOSING
-    assert n.y <= config.FRONT_STOP_DISTANCE_CM + 15.0
+
+
+def test_benchmark_return_early_rear_glitch_is_ignored():
+    """A close rear reading right after leaving the far wall must not fire."""
+    n = _return_nav(lane_distance=10.0)
+    at_wall = reading(back_left=20.0, back_right=20.0)
+    cmd = n.decide(at_wall, yaw=0.0, dt=0.0)
+    cmd = n.decide(at_wall, yaw=0.0, dt=0.0)
+    assert cmd.action is Action.REVERSE
+    assert n.phase is Phase.BENCHMARK_RETURN
+
+
+def test_benchmark_return_disagreeing_rear_is_ignored():
+    """One back sensor seeing something narrow must not end the return."""
+    n = _return_nav(lane_distance=140.0)
+    skewed = reading(back_left=20.0, back_right=80.0)
+    cmd = n.decide(skewed, yaw=0.0, dt=0.0)
+    cmd = n.decide(skewed, yaw=0.0, dt=0.0)
+    assert cmd.action is Action.REVERSE
+
+
+def test_benchmark_return_odometry_backstop_aligns_pit():
+    """With no rear wall ever seen, dead-reckoned y still ends the return."""
+    n = _return_nav(origin_y=200.0,
+                    lane_distance=200.0 - config.BACK_STOP_DISTANCE_CM)
+    cmd = n.decide(reading(), yaw=0.0, dt=0.0)
+    assert cmd.action is Action.ALIGN_PIT
+    assert n.phase is Phase.BENCHMARK_ALIGN_PIT
+    assert n.mode is Mode.DISPOSING
 
 
 def _run():
