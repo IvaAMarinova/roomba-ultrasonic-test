@@ -533,10 +533,10 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
             print("[pit] aligned -> face start wall and dump")
             _spin_to_heading(logger, motors, cfg, imu, nav, 0.0)
             nav.target_heading = 0.0
-            _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
+            #_dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
     elif cmd.action is Action.DISPOSE:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
-        _dispose(logger, motors, cfg, imu, nav, disposer)
+        #_dispose(logger, motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
         motors.stop(logger)
 
