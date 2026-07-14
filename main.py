@@ -495,6 +495,13 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         nav.complete_spin_left()
     elif cmd.action is Action.FACE_HEADING:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
+        if (getattr(cfg, "HILL_BENCHMARK_MODE", False) and cmd.face_heading == 180.0
+                and cmd.wall_stop
+                and nav.collector.count
+                < getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)):
+            nav.collector.add(1)
+            logger.log("benchmark", step="collect_at_far_wall",
+                       count=nav.collector.count)
         _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
         nav.complete_face_heading(cmd.face_heading)
         _sync_shovel_height(front_servo, nav)
@@ -504,13 +511,6 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
         _u_turn(logger, motors, cfg, direction, imu, nav, front_servo)
     elif cmd.action is Action.ALIGN_CENTER:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
-        if (getattr(cfg, "HILL_BENCHMARK_MODE", False) and cmd.face_heading == 180.0
-                and cmd.wall_stop
-                and nav.collector.count
-                < getattr(cfg, "BENCHMARK_COLLECT_BLOCKS", 1)):
-            nav.collector.add(1)
-            logger.log("benchmark", step="collect_at_far_wall",
-                       count=nav.collector.count)
         if sensors is None:
             logger.log("wall_align", step="skip", reason="no sensors")
             if cmd.face_heading is not None:
@@ -630,7 +630,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     hill = getattr(cfg, "HILL_MODE", False)
     benchmark = getattr(cfg, "HILL_BENCHMARK_MODE", False)
     if hill and benchmark:
-        mode_label = ("benchmark: climb -> far wall -> align -> 180 -> return "
+        mode_label = ("benchmark: climb -> far wall -> 180 -> return "
                       "-> align pit -> dump "
                       f"(collect {getattr(cfg, 'BENCHMARK_COLLECT_BLOCKS', 1)} block)")
     elif hill:

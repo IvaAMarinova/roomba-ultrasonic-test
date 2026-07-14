@@ -293,11 +293,6 @@ class NavigationController:
         if self.phase is Phase.BENCHMARK_RETURN:
             return self._benchmark_return(readings)
 
-        if self.phase is Phase.ALIGN_AT_FAR_WALL:
-            return self._remember(Command(
-                Action.ALIGN_CENTER, face_heading=self._post_align_heading,
-                wall_stop=True, reason="far wall lateral align"))
-
         if self.phase is Phase.BENCHMARK_ALIGN_PIT:
             if self._pit_handled:
                 self._done = True
@@ -360,31 +355,21 @@ class NavigationController:
 
         return self._cmd_cruise(readings, reason="cruising")
 
-    def _begin_far_wall_align(self, readings, end_dist, post_heading, post_phase, label):
-        """Re-anchor at the far wall, then lateral sensor align before turning back."""
-        self._reanchor_lane_from_wall(end_dist)
-        if post_phase is Phase.BENCHMARK_RETURN:
-            self._return_origin_y = self.y
-            self.lane_distance = 0.0
-        self._post_align_heading = post_heading
-        self._post_align_phase = post_phase
-        self.phase = Phase.ALIGN_AT_FAR_WALL
-        self.mode = Mode.TURNING
-        print(f"[{label}] far wall (y={self.y:.0f}, x={self.x:.0f}) "
-              f"-> align, face {post_heading:.0f}°")
-        return self._remember(Command(
-            Action.ALIGN_CENTER, face_heading=post_heading, wall_stop=True,
-            reason=f"far wall align {end_dist:.0f}cm"))
-
     def _benchmark_out(self, readings):
         """Centre line along +y to the far wall; scoop down and collecting."""
         cfg = self.cfg
         end_dist, end_agree = self._lane_end_wall(readings)
         if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                 and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
-            return self._begin_far_wall_align(
-                readings, end_dist, post_heading=180.0,
-                post_phase=Phase.BENCHMARK_RETURN, label="benchmark")
+            self._reanchor_lane_from_wall(end_dist)
+            self.phase = Phase.BENCHMARK_RETURN
+            self.lane_distance = 0.0
+            self._return_origin_y = self.y
+            self.target_heading = 180.0
+            print(f"[benchmark] far wall (y={self.y:.0f}) -> turn 180, return")
+            return self._remember(Command(
+                Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
+                reason=f"benchmark far wall {end_dist:.0f}cm"))
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
 
@@ -415,14 +400,6 @@ class NavigationController:
                       f"blocks={self.collector.count}) -> align pit")
                 return self._remember(Command(
                     Action.ALIGN_PIT, reason="benchmark align pit center"))
-            heading_ok = (not self._has_heading
-                            or abs(angle_diff(self.heading_rel, 180.0))
-                            <= getattr(cfg, "ORIENT_SKIP_DEG", 15.0))
-            if not heading_ok:
-                self.mode = Mode.TURNING
-                return self._remember(Command(
-                    Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
-                    reason=f"benchmark return re-orient (wall {end_dist:.0f}cm)"))
             return self._remember(Command(
                 Action.STOP, reason=f"benchmark return wall {end_dist:.0f}cm",
                 wall_stop=True))
@@ -440,15 +417,15 @@ class NavigationController:
         end_dist, end_agree = self._lane_end_wall(readings)
         if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                 and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
+            self._reanchor_lane_from_wall(end_dist)
             trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
             if self.phase is Phase.APPROACH_FAR_WALL:
-                return self._begin_far_wall_align(
-                    readings, end_dist, post_heading=-90.0,
-                    post_phase=Phase.APPROACH_LEFT_WALL, label="hill")
-            self._reanchor_lane_from_wall(end_dist)
-            self.reset_sweep_transverse(origin_y=self.y)
-            self.phase = Phase.SWEEP
-            print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
+                self.phase = Phase.APPROACH_LEFT_WALL
+                print("[hill] wall ahead -> spin left, seek left wall")
+            else:
+                self.reset_sweep_transverse(origin_y=self.y)
+                self.phase = Phase.SWEEP
+                print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
             return self._hill_spin_left_cmd(trigger, wall_stop=True)
         return self._cmd_cruise(readings, reason="driving to wall", hold_heading=False)
 
