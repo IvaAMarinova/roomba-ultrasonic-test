@@ -48,12 +48,12 @@ HILL_BENCHMARK_MODE = True
 BENCHMARK_COLLECT_BLOCKS = 1
 BENCHMARK_LIFT_INTERVAL_S = 4.0   # stop + scoop this often on the flat (benchmark outbound)
 BENCHMARK_MIN_RETURN_CM = 55.0   # return leg travel before a front wall stop counts as home
-HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0   # horizontal centre of the slope (start + climb end)
+HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0 - 15   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
 RIGHT_WALL_STOP_CM = 30.0           # front_right this close -> hugging right wall
 LEFT_WALL_STOP_CM = 30.0            # front_left this close -> hugging left wall
-FRONT_SERVO_CLIMB_PULSE_MS = 1.35   # raised enough to clear the slope (TUNE)
+FRONT_SERVO_CLIMB_PULSE_MS = 1.60   # raised enough to clear the slope (TUNE)
 
 # ---------------------------------------------------------------------------
 # Start pose and coordinate frame.
