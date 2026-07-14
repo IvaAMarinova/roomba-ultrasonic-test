@@ -3,10 +3,10 @@ import math
 # ---------------------------------------------------------------------------
 # Arena geometry (known and fixed for the competition).
 # ---------------------------------------------------------------------------
-# ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
-# ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
-ARENA_WIDTH_CM = 150.0        # across the lanes (the car steps sideways here)
-ARENA_LENGTH_CM = 212.0       # along each lane (the long axis the car runs)
+ARENA_WIDTH_CM = 210.0        # across the lanes (the car steps sideways here)
+ARENA_LENGTH_CM = 300.0       # along each lane (the long axis the car runs)
+#ARENA_WIDTH_CM = 150.0        # across the lanes (the car steps sideways here)
+#ARENA_LENGTH_CM = 212.0       # along each lane (the long axis the car runs)
 
 ROBOT_WIDTH_CM = 50.0         # physical width of the car
 
@@ -51,8 +51,8 @@ BENCHMARK_MIN_RETURN_CM = 55.0   # return leg travel before a front wall stop co
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
-RIGHT_WALL_STOP_CM = 22.0           # front_right this close -> hugging right wall
-LEFT_WALL_STOP_CM = 22.0            # front_left this close -> hugging left wall
+RIGHT_WALL_STOP_CM = 30.0           # front_right this close -> hugging right wall
+LEFT_WALL_STOP_CM = 30.0            # front_left this close -> hugging left wall
 FRONT_SERVO_CLIMB_PULSE_MS = 1.35   # raised enough to clear the slope (TUNE)
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ COLLECTION_CAPACITY_BLOCKS = 10     # TODO: real bucket capacity; count comes fr
 # ---------------------------------------------------------------------------
 FRONT_SERVO_PIN = 18                # BCM pin for the front servo PWM signal
 FRONT_SERVO_DOWN_PULSE_MS = 0.780   # resting / collecting pulse width
-FRONT_SERVO_UP_PULSE_MS = 1.840     # raised pulse width
+FRONT_SERVO_UP_PULSE_MS = 1.740     # raised pulse width
 FRONT_SERVO_MOVE_S = 0.80           # seconds for full down<->up travel (0 = instant jump)
 FRONT_SERVO_RAMP_STEP_S = 0.02      # update interval while ramping
 FRONT_SERVO_START_UP_S = 0.0        # seconds to hold scoop up at launch before lowering
@@ -197,7 +197,7 @@ BACK_SENSORS = ("back_left", "back_right")
 #   throws off the time-based estimate. Odometry is only the backstop (used if all
 #   front sensors drop out -- see LANE_END_MARGIN_CM).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 55.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
+FRONT_STOP_DISTANCE_CM = 45.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
                                  # Median-of-two often reads ~42–43 cm at the real ~40 cm standoff;
                                  # 41 rejected 42.7 and the turn fired at ~18 cm instead.
 FRONT_SLOW_DISTANCE_CM = 68.0    # start slowing down / preparing to turn
@@ -221,8 +221,8 @@ FRONT_AGREE_TOL_CM = 15.0        # front readings within this of each other "agr
 FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
 WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
 WALL_PERSIST_TICKS = 1           # consecutive ticks the wall-stop must hold before turning
-WALL_HEADING_ALIGN_DEG = 30.0    # only fuse / stop on a front wall when square to the lane heading
-WALL_CONTACT_STOP_CM = 28.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
+WALL_HEADING_ALIGN_DEG = 45.0    # only fuse / stop on a front wall when square to the lane heading
+WALL_CONTACT_STOP_CM = 40.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
                                  # 28 not 25: medians land ~25.5 at contact; 25.0 missed and delayed the turn
 
 # ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # Motion parameters.
 # ---------------------------------------------------------------------------
 DRIVE_SPEED = 0.3                # hill climb only (everything else uses SLOW_SPEED)
-SLOW_SPEED = 0.2                 # forward speed for approach, sweep, descend, serpentine
+SLOW_SPEED = 0.1                 # forward speed for approach, sweep, descend, serpentine
 TURN_SPEED = 0.1                 # in-place rotation speed
 
 # Physical speed calibration -- the ONE thing to measure. FULL_SPEED_CM_PER_S is how
@@ -272,7 +272,7 @@ DRIVE_CM_PER_S = FULL_SPEED_CM_PER_S * DRIVE_SPEED
 #   toward the car's right. (With no IMU, the trim is 0 -> open-loop straight.)
 # ---------------------------------------------------------------------------
 HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
-MAX_HEADING_TRIM = 0.4            # clamp on the heading-hold steering trim
+MAX_HEADING_TRIM = 0.0            # clamp on the heading-hold steering trim
 HEADING_HOLD_DEADBAND_DEG = 4.0   # ignore smaller errors (stops IMU weave)
 
 # Gentler heading-hold on benchmark return (correct drift without weave).
