@@ -1,0 +1,82 @@
+#!/bin/bash
+# fucking_stop -- EMERGENCY STOP for the roomba-bot service, for THIS BOOT.
+#
+# Layered so no single failure can leave the robot moving:
+#   1. runtime-mask the unit  -> systemd cannot start it again this boot, not
+#      via Restart=on-failure, not via a stray `systemctl start`. The mask
+#      lives in /run, so it evaporates on reboot and autostart resumes.
+#   2. stop + SIGKILL the unit -> down NOW, no 15 s graceful-stop wait.
+#   3. pkill any main.py started outside the service (manual ./run.sh runs).
+#   4. force the motor GPIOs low and cut the servo pulses -- a SIGKILLed
+#      process leaves pins latched at their last state, so we clear them
+#      ourselves (pigs -> pinctrl -> RPi.GPIO, first one that works).
+#   5. verify and report.
+#
+# Re-arm without rebooting:  sudo systemctl unmask roomba-bot && sudo systemctl start roomba-bot
+# Install: sudo cp systemd/fucking_stop /usr/local/bin/ && sudo chmod 755 /usr/local/bin/fucking_stop
+
+# Pins from config.py -- keep in sync. MOTORS: dir 20/16, pwm 13/12.
+MOTOR_PINS="13 12 20 16"
+SERVO_PINS="18 19"
+UNIT=roomba-bot.service
+
+# Need root for systemctl/pins; re-exec via sudo (passwordless for roomba).
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -n "$0" "$@"
+fi
+
+echo "== FUCKING STOP =="
+
+# 1) Block every restart path for this boot.
+systemctl mask --runtime "$UNIT" 2>/dev/null \
+    && echo "[1] unit runtime-masked (cannot start again until reboot/unmask)" \
+    || echo "[1] WARNING: mask failed (unit missing or systemd unreachable) -- continuing"
+
+# 2) Take the unit down NOW.
+systemctl stop --no-block "$UNIT" 2>/dev/null
+systemctl kill --signal=SIGKILL "$UNIT" 2>/dev/null
+timeout 10 systemctl stop "$UNIT" 2>/dev/null
+systemctl reset-failed "$UNIT" 2>/dev/null
+echo "[2] unit stopped + SIGKILLed (state: $(systemctl is-active "$UNIT" 2>/dev/null || true))"
+
+# 3) Kill bot processes running outside the service too.
+pkill -9 -f 'python3 .*main\.py' 2>/dev/null && echo "[3] killed stray main.py" \
+    || echo "[3] no stray main.py running"
+pkill -9 -f 'run\.sh main\.py' 2>/dev/null || true
+
+# 4) Force outputs safe regardless of how the processes died.
+pins_ok=0
+if command -v pigs >/dev/null 2>&1 && pigs t >/dev/null 2>&1; then
+    for p in $MOTOR_PINS; do pigs m "$p" w >/dev/null && pigs w "$p" 0 >/dev/null || pins_ok=1; done
+    for p in $SERVO_PINS; do pigs servo "$p" 0 >/dev/null || pins_ok=1; done
+    [ "$pins_ok" -eq 0 ] && echo "[4] motor pins forced low + servo pulses off (pigs)"
+fi
+if [ "$pins_ok" -ne 0 ] || ! command -v pigs >/dev/null 2>&1 || ! pigs t >/dev/null 2>&1; then
+    pins_ok=0
+    if command -v pinctrl >/dev/null 2>&1; then
+        for p in $MOTOR_PINS $SERVO_PINS; do pinctrl set "$p" op dl || pins_ok=1; done
+        [ "$pins_ok" -eq 0 ] && echo "[4] motor+servo pins forced low (pinctrl)"
+    else
+        pins_ok=1
+    fi
+    if [ "$pins_ok" -ne 0 ]; then
+        python3 - <<EOF && echo "[4] motor pins forced low (RPi.GPIO)" || echo "[4] ERROR: could not force pins low -- CHECK THE ROBOT"
+import RPi.GPIO as GPIO
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+for p in ($(echo "$MOTOR_PINS" | tr ' ' ',')):
+    GPIO.setup(p, GPIO.OUT, initial=GPIO.LOW)
+EOF
+    fi
+fi
+
+# 5) Verify.
+state=$(systemctl is-active "$UNIT" 2>/dev/null || true)
+leftover=$(pgrep -af 'python3 .*main\.py' 2>/dev/null || true)
+if [ "$state" != "active" ] && [ -z "$leftover" ]; then
+    echo "== STOPPED. Service dead + masked for this boot; autostarts again after reboot. =="
+    echo "   (re-arm now instead: sudo systemctl unmask $UNIT && sudo systemctl start $UNIT)"
+    exit 0
+fi
+echo "== WARNING: something survived (unit: ${state:-?}; procs: ${leftover:-none}) -- run again / pull the battery =="
+exit 1
