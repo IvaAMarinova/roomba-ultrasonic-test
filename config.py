@@ -66,6 +66,13 @@ BENCHMARK_FAR_WALL_PERSIST_TICKS = 3  # consecutive agreeing ticks before stoppi
 # stop stays disarmed until the tight pair has read at least this much gap
 # during the leg. Blinded sensors never arm -> odometry backstop (no re-anchor).
 BENCHMARK_FAR_WALL_ARM_CM = 80.0
+# Armed readings BELOW the ground-echo band stop the leg with NO odometry gate.
+# The descent after the crest picks up so much speed that dead reckoning can be
+# ~180 cm short when the wall actually arrives (2026-07-14 15:0x run: wall at
+# 22 cm at believed y=88; MIN_Y held the stop back and the car plowed the wall
+# until the impact spun it ~84 deg). Keep this BELOW the known phantom bands so
+# it can't false-fire: down-slope ground reads ~40-60, the scoop echo ~36-44.
+BENCHMARK_FAR_WALL_CONTACT_CM = 30.0
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0 - 15   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
@@ -361,6 +368,9 @@ ORIENT_SKIP_DEG = 15.0           # skip dispose / return spins when already with
 IMU_TURN_TIMEOUT_S = TURN_TIME_S * 2.5  # safety cap: never spin longer than this
 IMU_GLITCH_MAX_STEP_DEG = 45.0   # per-sample heading jumps larger than this are
                                  # treated as corrupted I2C reads and ignored
+IMU_GLITCH_RESYNC_TICKS = 3      # ...unless this many consecutive samples agree on
+                                 # the new heading: then it's a real spin (wall hit,
+                                 # IMU re-lock), accept it instead of freezing stale
 IMU_TURN_POLL_S = 0.01           # how often to re-read heading during a spin
 
 # Stall recovery during a spin. If after IMU_TURN_BOOST_AFTER_S of turning the

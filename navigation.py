@@ -137,6 +137,8 @@ class NavigationController:
         self._rear_persist = 0         # consecutive ticks the rear wall-stop has held
         self._far_persist = 0          # consecutive ticks the benchmark far-wall stop has held
         self._far_armed = False        # tight pair has seen clear space ahead this leg
+        self._glitch_ticks = 0         # consecutive out-of-band IMU samples (resync gate)
+        self._glitch_heading = None    # last out-of-band heading, to check they agree
         self._post_align_heading = None
         self._post_align_phase = None
 
@@ -381,10 +383,18 @@ class NavigationController:
         end_dist = statistics.median(finite) if tight else INF
         if tight and end_dist >= getattr(cfg, "BENCHMARK_FAR_WALL_ARM_CM", 80.0):
             self._far_armed = True
-        far_hold = (tight and self._far_armed
-                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+        # Armed, two stop levels: at the normal standoff only once odometry
+        # passes MIN_Y (the down-slope ground echoes right inside the standoff
+        # band after the crest), but BELOW the ground-echo band with no
+        # odometry gate at all -- the descent outruns dead reckoning so badly
+        # that MIN_Y can still be ~110 cm away when the wall physically
+        # arrives, and holding the stop back plows the car into it.
+        contact = (end_dist
+                   <= getattr(cfg, "BENCHMARK_FAR_WALL_CONTACT_CM", 30.0))
+        standoff = (end_dist <= cfg.FRONT_STOP_DISTANCE_CM
                     and self.y >= getattr(cfg, "BENCHMARK_FAR_WALL_MIN_Y_CM",
                                           200.0))
+        far_hold = tight and self._far_armed and (contact or standoff)
         self._far_persist = self._far_persist + 1 if far_hold else 0
         wall_stop = (self._far_persist
                      >= getattr(cfg, "BENCHMARK_FAR_WALL_PERSIST_TICKS", 3))
@@ -963,7 +973,21 @@ class NavigationController:
         cruising = (self.mode is Mode.DRIVING
                     and self._last_action in (Action.FORWARD, Action.REVERSE))
         if cruising and abs(step) > max_step:
-            return
+            # Corrupted I2C reads are single-tick and scatter; a REAL big
+            # heading change (wall impact spinning the car, IMU re-lock)
+            # persists and repeats. Accept it after enough consecutive
+            # out-of-band samples that agree with each other -- rejecting
+            # forever freezes heading_rel at a stale value while the car
+            # drives off in a new direction (2026-07-14 15:0x run: heading
+            # pinned at 17.2 deg while yaw moved ~84 deg after a wall hit).
+            agree = (self._glitch_heading is not None
+                     and abs(angle_diff(raw, self._glitch_heading)) <= max_step)
+            self._glitch_ticks = self._glitch_ticks + 1 if agree else 1
+            self._glitch_heading = raw
+            if self._glitch_ticks < getattr(cfg, "IMU_GLITCH_RESYNC_TICKS", 3):
+                return
+        self._glitch_ticks = 0
+        self._glitch_heading = None
         self.heading_rel = raw
         self._prev_heading_rel = raw
 
