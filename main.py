@@ -323,7 +323,7 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
         steer = 0.0
         if cur is not None:
             steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM,
-                        cfg.HEADING_HOLD_GAIN * angle_diff(target_heading, cur)))
+                        -cfg.HEADING_HOLD_GAIN * angle_diff(target_heading, cur)))
         motors.drive(logger, cfg.SLOW_SPEED, steer)
         time.sleep(period)
     motors.stop(logger)
@@ -410,7 +410,8 @@ def _log_status(logger, nav, readings, yaw, cmd):
     """One structured line per control tick: mode, pose, sensors, IMU, action."""
     logger.log("nav", mode=nav.mode.name, action=cmd.action.name, reason=cmd.reason,
                x=nav.x, y=nav.y, heading=nav.heading_rel,
-               target_heading=nav.target_heading, lane=nav._lane_index,
+               target_heading=nav.target_heading, steer=cmd.steer,
+               lane=nav._lane_index,
                lane_distance=nav.lane_distance, front_wall=nav.front_wall_cm,
                front_agree=nav.front_agree, yaw=yaw, blocks=nav.collector.count,
                **readings)

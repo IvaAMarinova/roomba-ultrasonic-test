@@ -254,6 +254,7 @@ DRIVE_CM_PER_S = FULL_SPEED_CM_PER_S * DRIVE_SPEED
 # ---------------------------------------------------------------------------
 HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
 MAX_HEADING_TRIM = 0.4            # clamp on the heading-hold steering trim
+HEADING_HOLD_DEADBAND_DEG = 4.0   # ignore smaller errors (stops IMU weave)
 
 # ---------------------------------------------------------------------------
 # Odometry end-of-lane BACKSTOP.

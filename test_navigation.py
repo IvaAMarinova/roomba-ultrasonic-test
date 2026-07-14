@@ -69,14 +69,37 @@ def test_on_heading_cruises_straight():
 
 
 def test_heading_right_of_target_trims_left():
-    # Heading right of target -> steer left (negative trim).
     cmd = nav().decide(reading(), yaw=10.0, dt=0.0)
-    assert cmd.steer < 0
+    assert cmd.steer > 0
 
 
 def test_heading_left_of_target_trims_right():
     cmd = nav().decide(reading(), yaw=-10.0, dt=0.0)
-    assert cmd.steer > 0
+    assert cmd.steer < 0
+
+
+def test_heading_deadband_drives_straight():
+    cfg = cfg_with(HEADING_HOLD_DEADBAND_DEG=4.0)
+    n = nav(cfg)
+    cmd = n.decide(reading(), yaw=2.0, dt=0.0)
+    assert cmd.steer == 0.0
+
+
+def test_heading_glitch_is_ignored():
+    n = nav()
+    n.decide(reading(), yaw=0.0, dt=0.0)
+    n._last_action = Action.FORWARD
+    n.mode = Mode.DRIVING
+    n.decide(reading(), yaw=80.0, dt=0.0)   # 80 deg jump while cruising -> reject
+    assert abs(n.heading_rel) < 10.0
+
+
+def test_hill_climb_drives_straight():
+    n = nav(hill_cfg())
+    n.phase = Phase.CLIMB_FIRST
+    cmd = n.decide(reading(front_right=18.0), yaw=8.0, dt=0.1)
+    assert cmd.action is Action.FORWARD
+    assert cmd.steer == 0.0
 
 
 def test_no_imu_drives_open_loop_straight():

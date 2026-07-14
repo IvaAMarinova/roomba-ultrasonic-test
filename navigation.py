@@ -104,6 +104,7 @@ class NavigationController:
         # Heading reference (set by set_origin()); until then heading-hold is off.
         self._yaw0 = None
         self._has_heading = False
+        self._prev_heading_rel = 0.0
 
         # Serpentine sweep + which way it steps sideways. From a bottom-left start
         # the first turn is RIGHT and lanes march +x; from bottom-right, LEFT / -x.
@@ -172,6 +173,7 @@ class NavigationController:
             return
         self._yaw0 = yaw0
         self.heading_rel = 0.0
+        self._prev_heading_rel = 0.0
         self._has_heading = True
         print(f"[nav] heading origin set (yaw0={yaw0:.1f}deg -> heading 0)")
 
@@ -248,7 +250,8 @@ class NavigationController:
             if self.y >= cfg.HILL_TOP_Y_CM:
                 self.phase = Phase.APPROACH_FAR_WALL
                 print(f"[hill] top of slope (y={self.y:.0f}) -> drive to wall")
-            return self._cmd_cruise(readings, reason="climbing slope (centre)")
+            return self._cmd_cruise(readings, reason="climbing slope (centre)",
+                                     hold_heading=False)
 
         if self.phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL):
             return self._hill_wall_then_spin_left(readings)
@@ -315,7 +318,7 @@ class NavigationController:
                 self.phase = Phase.SWEEP
                 print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
             return self._hill_spin_left_cmd(trigger or "wall stop")
-        return self._cmd_cruise(readings, reason="driving to wall")
+        return self._cmd_cruise(readings, reason="driving to wall", hold_heading=False)
 
     def _hill_spin_left_cmd(self, reason):
         self.mode = Mode.TURNING
@@ -343,13 +346,14 @@ class NavigationController:
         print(f"[hill] at centre (x={self.x:.0f}, y={self.y:.0f}) -> descend")
         return self._cmd_cruise(readings, reason="descending slope (centre)")
 
-    def _cmd_cruise(self, readings, reason="", extra_steer=0.0):
+    def _cmd_cruise(self, readings, reason="", extra_steer=0.0, hold_heading=True):
         """Forward at cruise speed with IMU heading-hold (+ optional wall-hug trim)."""
         cfg = self.cfg
         self.mode = Mode.DRIVING
         speed = (cfg.SLOW_SPEED if self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM
                  else cfg.DRIVE_SPEED)
-        steer = self._cruise_trim(readings) + extra_steer
+        trim = self._cruise_trim(readings) if hold_heading else 0.0
+        steer = trim + extra_steer
         steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, steer))
         return self._remember(Command(
             Action.FORWARD, speed=speed, steer=steer, reason=reason))
@@ -451,6 +455,7 @@ class NavigationController:
         self.lane_distance = 0.0
         self.mode = Mode.DRIVING
         self.note_blocking_maneuver()
+        self._prev_heading_rel = self.heading_rel
 
     def complete_turn(self):
         """Call after main.py finishes the blocking U-turn maneuver."""
@@ -590,7 +595,7 @@ class NavigationController:
         """Fuse IMU heading + front wall + odometry into the pose estimate."""
         cfg = self.cfg
         if yaw is not None and self._has_heading:
-            self.heading_rel = angle_diff(yaw, self._yaw0)
+            self._update_heading_rel(yaw)
 
         # Never bridge more than a couple of control ticks -- a blocking dispose,
         # U-turn, or front-scoop cycle can leave dt at many seconds.
@@ -728,12 +733,28 @@ class NavigationController:
             Turn.LEFT if self._next_serpentine_turn is Turn.RIGHT else Turn.RIGHT
         )
 
+    def _update_heading_rel(self, yaw):
+        """Fuse IMU yaw into heading_rel, rejecting single-tick glitches while cruising."""
+        cfg = self.cfg
+        raw = angle_diff(yaw, self._yaw0)
+        step = angle_diff(raw, self._prev_heading_rel)
+        max_step = getattr(cfg, "IMU_GLITCH_MAX_STEP_DEG", 45.0)
+        cruising = (self.mode is Mode.DRIVING
+                    and self._last_action is Action.FORWARD)
+        if cruising and abs(step) > max_step:
+            return
+        self.heading_rel = raw
+        self._prev_heading_rel = raw
+
     def _cruise_trim(self, readings):
         """Steering trim while cruising: IMU heading-hold toward the lane heading."""
         cfg = self.cfg
         if not self._has_heading:
-            return 0.0  # no IMU -> can't hold a heading; drive open-loop straight
-        # Positive steer = toward the car's right. Drifted right of target -> steer left.
+            return 0.0
         err = angle_diff(self.target_heading, self.heading_rel)
-        trim = cfg.HEADING_HOLD_GAIN * err
+        deadband = getattr(cfg, "HEADING_HOLD_DEADBAND_DEG", 0.0)
+        if abs(err) <= deadband:
+            return 0.0
+        # Sign matches _drive_to_wall in main.py and this rover's IMU/motor frame.
+        trim = -cfg.HEADING_HOLD_GAIN * err
         return max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, trim))
