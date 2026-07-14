@@ -136,8 +136,8 @@ FRONT_SERVO_DOWN_PULSE_MS = 0.780   # resting / collecting pulse width
 FRONT_SERVO_UP_PULSE_MS = 1.740     # raised pulse width
 FRONT_SERVO_MOVE_S = 0.80           # seconds for full down<->up travel (0 = instant jump)
 FRONT_SERVO_RAMP_STEP_S = 0.02      # update interval while ramping
-FRONT_SERVO_START_UP_S = 0.0        # seconds to hold scoop up at launch before lowering
-FRONT_SERVO_INTERVAL_S = 20.0       # raise the front scoop this often (seconds of driving)
+FRONT_SERVO_START_UP_S = 10.0       # seconds to hold scoop up (and stay still) at launch before lowering
+FRONT_SERVO_INTERVAL_S = 7.0        # raise the front scoop this often (seconds of driving)
 FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 
 # ---------------------------------------------------------------------------

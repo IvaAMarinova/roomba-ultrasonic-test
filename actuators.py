@@ -310,13 +310,16 @@ class FrontServo:
         time.sleep(self.cfg.FRONT_SERVO_HOLD_S)
         self.lower()
 
-    def startup(self):
+    def startup(self, final="down"):
         self.raise_up()
         hold_s = self.cfg.FRONT_SERVO_START_UP_S
         if hold_s > 0:
             print(f"[front-servo] holding up for {hold_s:.1f}s (regulation start size)")
             time.sleep(hold_s)
-        self.lower()
+        if final == "climb":
+            self.climb()
+        else:
+            self.lower()
 
     def cleanup(self):
         self._driver.cleanup()

@@ -787,7 +787,7 @@ def main():
         from imu import IMU
         imu = IMU(logger, cfg)
     try:
-        front_servo.startup() if not cfg.HILL_MODE else front_servo.climb()
+        front_servo.startup(final="climb" if cfg.HILL_MODE else "down")
         if args.shell:
             breakpoint()
         elif cfg.USE_SENSORS:
