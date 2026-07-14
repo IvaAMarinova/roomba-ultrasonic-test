@@ -136,7 +136,7 @@ FRONT_SERVO_DOWN_PULSE_MS = 0.780   # resting / collecting pulse width
 FRONT_SERVO_UP_PULSE_MS = 1.740     # raised pulse width
 FRONT_SERVO_MOVE_S = 0.80           # seconds for full down<->up travel (0 = instant jump)
 FRONT_SERVO_RAMP_STEP_S = 0.02      # update interval while ramping
-FRONT_SERVO_START_UP_S = 0.0        # seconds to hold scoop up at launch before lowering
+FRONT_SERVO_START_UP_S = 10.0        # seconds to hold scoop up at launch before lowering
 FRONT_SERVO_INTERVAL_S = 20.0       # raise the front scoop this often (seconds of driving)
 FRONT_SERVO_HOLD_S = 1.0            # dwell at the top before returning down
 
@@ -297,7 +297,7 @@ REAR_WALL_PERSIST_TICKS = 2           # consecutive ticks before trusting the re
 # Fixed mechanical trim on forward drives (no IMU). Compensates for uneven
 # wheels/motors after wear. Positive = nudge right (corrects left drift).
 # Tune on a long straight run; keep well below MAX_HEADING_TRIM.
-FORWARD_STEER_TRIM = 0.0140
+FORWARD_STEER_TRIM = 0.0
 
 # ---------------------------------------------------------------------------
 # Odometry end-of-lane BACKSTOP.
@@ -381,17 +381,16 @@ CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
 #       H-bridges and turning on the real car (no sensors / dividers needed yet).
 #   USE_SENSORS = True  -> normal sensor-driven navigation.
 # ---------------------------------------------------------------------------
-USE_SENSORS = True
+USE_SENSORS = False
 
 # Open-loop maneuver script used when USE_SENSORS is False.
 # Each step is (action, seconds), where action is one of:
 #   "forward", "left", "right", "stop".
 # Turn steps use TURN_TIME_S so they should be ~90 degrees once it's tuned.
 DRIVE_TEST_SEQUENCE = [
-    ("forward", 2.0),
+    ("forward", 5.0),
     ("left",    TURN_TIME_S),
-    ("forward", 2.0),
-    ("right",   TURN_TIME_S),
-    ("forward", 2.0),
+    ("left",   TURN_TIME_S),
+    ("forward", 5.0),
     ("stop",    1.0),
 ]
