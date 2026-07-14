@@ -351,7 +351,7 @@ class NavigationController:
                 Action.FACE_HEADING, face_heading=180.0, wall_stop=True,
                 reason=f"benchmark far wall {end_dist:.0f}cm"))
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
-                                hold_heading=True)
+                                hold_heading=False)
 
     def _benchmark_return(self, readings):
         """Drive centre line home (heading 180); dump at the start wall."""
@@ -368,7 +368,7 @@ class NavigationController:
             return self._remember(Command(
                 Action.DISPOSE, reason="benchmark home -> dump", wall_stop=True))
         return self._cmd_cruise(readings, reason="benchmark: return home",
-                                hold_heading=True)
+                                hold_heading=False)
 
     def _hill_wall_then_spin_left(self, readings):
         """Drive until front sensors see the wall, then spin 90 deg left.
