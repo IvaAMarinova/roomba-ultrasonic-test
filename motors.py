@@ -49,6 +49,8 @@ class MotorDriver:
 
     def drive(self, logger, speed, steer=0.0):
         """Move forward at `speed`, biasing with `steer` (-1 left .. +1 right)."""
+        if speed > 0:
+            steer += self.cfg.FORWARD_STEER_TRIM
         # Steering right slows the right side; steering left slows the left side.
         self._set_side(logger, "left", speed + steer)
         self._set_side(logger, "right", speed - steer)
