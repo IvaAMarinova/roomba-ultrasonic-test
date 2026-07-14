@@ -404,16 +404,16 @@ CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
 #       H-bridges and turning on the real car (no sensors / dividers needed yet).
 #   USE_SENSORS = True  -> normal sensor-driven navigation.
 # ---------------------------------------------------------------------------
-USE_SENSORS = True
+USE_SENSORS = False
 
 # Open-loop maneuver script used when USE_SENSORS is False.
 # Each step is (action, seconds), where action is one of:
 #   "forward", "left", "right", "stop".
 # Turn steps use TURN_TIME_S so they should be ~90 degrees once it's tuned.
 DRIVE_TEST_SEQUENCE = [
-    ("forward", 5.0),
-    ("left",    TURN_TIME_S),
-    ("left",   TURN_TIME_S),
-    ("forward", 5.0),
+    ("forward", 21.0),
+    ("left", TURN_TIME_S),
+    ("left", TURN_TIME_S),
+    ("forward", 21.0),
     ("stop",    1.0),
 ]
