@@ -425,5 +425,7 @@ DRIVE_TEST_SEQUENCE = [
     ("left", TURN_TIME_S),
     ("left", TURN_TIME_S),
     ("forward", 21.0),
+    ("left", TURN_TIME_S),
+    ("left", TURN_TIME_S),
     ("stop",    1.0),
 ]
