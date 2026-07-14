@@ -274,6 +274,10 @@ LANE_END_MARGIN_CM = 40.0         # backstop: turn this far before the far wall 
 # no IMU is available (see USE_IMU_TURN below). Measure it on the actual car.
 TURN_TIME_S = 4
 
+# Dwell with motors stopped after each 90 deg spin so tires can settle before
+# the next move (helps when turning is stiff on the real floor).
+TURN_PAUSE_S = 1.0
+
 # ---------------------------------------------------------------------------
 # IMU-based (closed-loop) turning.
 #   With a BNO086 IMU present, an end-of-lane spin rotates until the *measured*

@@ -95,9 +95,16 @@ def _spin_90(logger, motors, cfg, direction, imu=None):
         if turned is not None:
             logger.log("uturn", step="imu_spin", direction=direction, turned=turned,
                        target=cfg.TURN_ANGLE_DEG)
-            return
-        logger.log("uturn", step="timed_fallback", reason="IMU gave no heading")
-    _spin_timed(logger, motors, cfg, direction)
+        else:
+            logger.log("uturn", step="timed_fallback", reason="IMU gave no heading")
+            _spin_timed(logger, motors, cfg, direction)
+    else:
+        _spin_timed(logger, motors, cfg, direction)
+
+    pause = getattr(cfg, "TURN_PAUSE_S", 0.0)
+    if pause > 0:
+        logger.log("uturn", step="settle", seconds=pause)
+        time.sleep(pause)
 
 
 def _heading_aligned(imu, nav, target_rel, tol):
