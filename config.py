@@ -246,7 +246,7 @@ SOUND_SPEED_CM_PER_S = 34300.0   # speed of sound, used to convert echo time
 # Motion parameters.
 # ---------------------------------------------------------------------------
 DRIVE_SPEED = 0.3                # hill climb only (everything else uses SLOW_SPEED)
-SLOW_SPEED = 0.2                 # forward speed for approach, sweep, descend, serpentine
+SLOW_SPEED = 0.1                 # forward speed for approach, sweep, descend, serpentine
 TURN_SPEED = 0.1                 # in-place rotation speed
 
 # Physical speed calibration -- the ONE thing to measure. FULL_SPEED_CM_PER_S is how
