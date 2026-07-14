@@ -261,6 +261,11 @@ HEADING_HOLD_GAIN = 0.02          # steer trim per degree of heading error
 MAX_HEADING_TRIM = 0.4            # clamp on the heading-hold steering trim
 HEADING_HOLD_DEADBAND_DEG = 4.0   # ignore smaller errors (stops IMU weave)
 
+# Gentler heading-hold on benchmark return (correct drift without weave).
+RETURN_HEADING_HOLD_GAIN = 0.01
+RETURN_MAX_HEADING_TRIM = 0.15
+RETURN_HEADING_DEADBAND_DEG = 6.0
+
 # Fixed mechanical trim on forward drives (no IMU). Compensates for uneven
 # wheels/motors after wear. Positive = nudge right (corrects left drift).
 # Tune on a long straight run; keep well below MAX_HEADING_TRIM.

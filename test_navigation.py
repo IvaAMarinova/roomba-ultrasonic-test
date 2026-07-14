@@ -738,6 +738,16 @@ def test_benchmark_out_drives_straight():
     assert cmd.steer == 0.0
 
 
+def test_benchmark_return_holds_heading_gently():
+    n = nav(hill_cfg(HILL_BENCHMARK_MODE=True))
+    n.phase = Phase.BENCHMARK_RETURN
+    n.target_heading = 180.0
+    cmd = n.decide(reading(), yaw=165.0, dt=0.1)
+    assert cmd.action is Action.FORWARD
+    assert cmd.steer != 0.0
+    assert abs(cmd.steer) <= 0.15
+
+
 def test_benchmark_return_dumps_with_one_block():
     n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
     n.phase = Phase.BENCHMARK_RETURN

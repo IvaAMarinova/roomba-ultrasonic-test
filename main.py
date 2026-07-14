@@ -402,11 +402,17 @@ def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors,
     print("[return] final dump complete -- arena swept and emptied.")
 
 
-def _wall_stop_lift(logger, motors, front_servo, cmd):
+def _wall_stop_lift(logger, motors, front_servo, cmd, cfg=None):
     """Raise the scoop while stopped so collected balls settle before turning."""
     if not cmd.wall_stop or front_servo is None:
         return
     motors.stop(logger)
+    # Benchmark turnaround: pause at the wall but keep scoop out of a collect cycle.
+    if (cfg is not None and getattr(cfg, "HILL_BENCHMARK_MODE", False)
+            and cmd.action is Action.FACE_HEADING
+            and cmd.face_heading == 180.0):
+        logger.log("wall_stop", step="pause", reason=cmd.reason)
+        return
     logger.log("wall_stop", step="lift_cycle", reason=cmd.reason)
     front_servo.lift_cycle()
 
@@ -415,19 +421,21 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
     if cmd.action is Action.FORWARD:
         motors.drive(logger, cmd.speed, cmd.steer)
     elif cmd.action is Action.SPIN_LEFT:
-        _wall_stop_lift(logger, motors, front_servo, cmd)
+        _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _spin_90(logger, motors, cfg, "left", imu)
         nav.complete_spin_left()
     elif cmd.action is Action.FACE_HEADING:
-        _wall_stop_lift(logger, motors, front_servo, cmd)
+        _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _spin_to_heading(logger, motors, cfg, imu, nav, cmd.face_heading)
         nav.complete_face_heading(cmd.face_heading)
+        if front_servo is not None and nav.wants_climb_shovel:
+            front_servo.climb()
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
-        _wall_stop_lift(logger, motors, front_servo, cmd)
+        _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
         _u_turn(logger, motors, cfg, direction, imu, nav, front_servo)
     elif cmd.action is Action.DISPOSE:
-        _wall_stop_lift(logger, motors, front_servo, cmd)
+        _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _dispose(logger, motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
         motors.stop(logger)

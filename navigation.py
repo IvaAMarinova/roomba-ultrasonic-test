@@ -368,7 +368,7 @@ class NavigationController:
             return self._remember(Command(
                 Action.DISPOSE, reason="benchmark home -> dump", wall_stop=True))
         return self._cmd_cruise(readings, reason="benchmark: return home",
-                                hold_heading=False)
+                                hold_heading=True)
 
     def _hill_wall_then_spin_left(self, readings):
         """Drive until front sensors see the wall, then spin 90 deg left.
@@ -856,9 +856,16 @@ class NavigationController:
         if not self._has_heading:
             return 0.0
         err = angle_diff(self.target_heading, self.heading_rel)
-        deadband = getattr(cfg, "HEADING_HOLD_DEADBAND_DEG", 0.0)
+        if self.phase is Phase.BENCHMARK_RETURN:
+            deadband = getattr(cfg, "RETURN_HEADING_DEADBAND_DEG", 6.0)
+            gain = getattr(cfg, "RETURN_HEADING_HOLD_GAIN", 0.01)
+            max_trim = getattr(cfg, "RETURN_MAX_HEADING_TRIM", 0.15)
+        else:
+            deadband = getattr(cfg, "HEADING_HOLD_DEADBAND_DEG", 0.0)
+            gain = cfg.HEADING_HOLD_GAIN
+            max_trim = cfg.MAX_HEADING_TRIM
         if abs(err) <= deadband:
             return 0.0
         # Sign matches _drive_to_wall in main.py and this rover's IMU/motor frame.
-        trim = -cfg.HEADING_HOLD_GAIN * err
-        return max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, trim))
+        trim = -gain * err
+        return max(-max_trim, min(max_trim, trim))
