@@ -247,8 +247,11 @@ class NavigationController:
         if self.phase is Phase.CLIMB_FIRST:
             if self.y >= cfg.HILL_TOP_Y_CM:
                 self.phase = Phase.APPROACH_FAR_WALL
+                self._wall_persist = 0
+                self.pos_source = "BRIDGE"
                 print(f"[hill] top of slope (y={self.y:.0f}) -> drive to wall")
-            return self._cmd_cruise(readings, reason="climbing slope (centre)")
+            return self._cmd_cruise(readings, reason="climbing slope (centre)",
+                                     hold_heading=False)
 
         if self.phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL):
             return self._hill_wall_then_spin_left(readings)
@@ -315,7 +318,7 @@ class NavigationController:
                 self.phase = Phase.SWEEP
                 print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
             return self._hill_spin_left_cmd(trigger or "wall stop")
-        return self._cmd_cruise(readings, reason="driving to wall")
+        return self._cmd_cruise(readings, reason="driving to wall", hold_heading=False)
 
     def _hill_spin_left_cmd(self, reason):
         self.mode = Mode.TURNING
@@ -343,13 +346,26 @@ class NavigationController:
         print(f"[hill] at centre (x={self.x:.0f}, y={self.y:.0f}) -> descend")
         return self._cmd_cruise(readings, reason="descending slope (centre)")
 
-    def _cmd_cruise(self, readings, reason="", extra_steer=0.0):
+    def _hill_odometry_only(self):
+        """On the slope / pre-sweep legs: trust time odometry, not far wall fusion."""
+        return self.phase in (Phase.CLIMB_FIRST, Phase.APPROACH_FAR_WALL,
+                              Phase.APPROACH_LEFT_WALL)
+
+    def _cmd_cruise(self, readings, reason="", extra_steer=0.0, hold_heading=True):
         """Forward at cruise speed with IMU heading-hold (+ optional wall-hug trim)."""
         cfg = self.cfg
         self.mode = Mode.DRIVING
-        speed = (cfg.SLOW_SPEED if self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM
-                 else cfg.DRIVE_SPEED)
-        steer = self._cruise_trim(readings) + extra_steer
+        if (self._hill_odometry_only()
+                and self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM
+                and self.front_agree >= cfg.FRONT_AGREE_MIN_COUNT):
+            speed = cfg.SLOW_SPEED
+        elif (not self._hill_odometry_only()
+                and self.front_wall_cm <= cfg.FRONT_SLOW_DISTANCE_CM):
+            speed = cfg.SLOW_SPEED
+        else:
+            speed = cfg.DRIVE_SPEED
+        trim = self._cruise_trim(readings) if hold_heading else 0.0
+        steer = trim + extra_steer
         steer = max(-cfg.MAX_HEADING_TRIM, min(cfg.MAX_HEADING_TRIM, steer))
         return self._remember(Command(
             Action.FORWARD, speed=speed, steer=steer, reason=reason))
@@ -612,7 +628,8 @@ class NavigationController:
         front_dist, agree = self._front_wall(readings)
         self.front_agree = agree
         lane_len = self._lane_axis_length()
-        if agree >= cfg.FRONT_AGREE_MIN_COUNT:
+        odo_only = self._hill_odometry_only()
+        if agree >= cfg.FRONT_AGREE_MIN_COUNT and not odo_only:
             expected_gap = max(0.0, lane_len - self.lane_distance)
             plausible = (front_dist <= lane_len
                          and abs(expected_gap - front_dist) <= cfg.WALL_EXPECT_TOL_CM)
@@ -625,13 +642,20 @@ class NavigationController:
             else:
                 self.front_wall_cm = front_dist
                 self.pos_source = "BRIDGE"
+        elif agree >= cfg.FRONT_AGREE_MIN_COUNT and odo_only:
+            if front_dist <= cfg.FRONT_SLOW_DISTANCE_CM:
+                self.front_wall_cm = front_dist
+            else:
+                self.front_wall_cm = INF
+            self.pos_source = "BRIDGE"
         else:
             self.front_wall_cm = INF
             self.pos_source = "BRIDGE"
 
         # While bridging, show a close agreed wall for slowing (never min-of-disagree).
         near_dist, near_agree = self._lane_end_wall(readings)
-        if self.pos_source == "BRIDGE" and near_agree >= cfg.FRONT_AGREE_MIN_COUNT:
+        if (self.pos_source == "BRIDGE" and not odo_only
+                and near_agree >= cfg.FRONT_AGREE_MIN_COUNT):
             self.front_wall_cm = near_dist
             self.front_agree = near_agree
 
@@ -639,6 +663,8 @@ class NavigationController:
 
         if self._is_transverse_sweep() or self._heading_is_across():
             self._sync_lateral_pose()
+        elif self._hill_odometry_only():
+            self.y = cfg.START_Y_CM + self.lane_distance
         else:
             forward = math.cos(math.radians(self.target_heading)) >= 0.0
             self.y = (cfg.START_Y_CM + self.lane_distance if forward
