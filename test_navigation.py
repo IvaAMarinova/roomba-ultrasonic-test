@@ -581,6 +581,7 @@ def test_hill_approach_wall_stops_with_bad_odometry():
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=0.0, dt=0.0)
     assert cmd.action is Action.SPIN_LEFT
+    assert cmd.wall_stop
     assert n.phase is Phase.APPROACH_LEFT_WALL
 
 
@@ -632,9 +633,8 @@ def test_hill_right_edge_at_half_approaches_center():
     n = nav(cfg)
     n.phase = Phase.SWEEP
     n.reset_sweep_transverse(origin_y=cfg.HILL_SWEEP_HALF_Y_CM - cfg.LANE_WIDTH_CM)
-    n.x = cfg.ARENA_WIDTH_CM - cfg.LANE_WIDTH_CM
+    n.lane_distance = cfg.ARENA_WIDTH_CM - cfg.LANE_WIDTH_CM
     n.y = cfg.HILL_SWEEP_HALF_Y_CM
-    n.lane_distance = cfg.ARENA_WIDTH_CM - 50.0
     n.target_heading = 90.0
     cmd = None
     for _ in range(config.WALL_PERSIST_TICKS):
@@ -656,6 +656,7 @@ def test_hill_descend_then_dispose():
     n.lane_distance = cfg.ARENA_LENGTH_CM - 10.0
     cmd = n.decide(reading(), yaw=180.0, dt=0.0)
     assert cmd.action is Action.DISPOSE
+    assert cmd.wall_stop
     assert n.mode is Mode.DISPOSING
 
 

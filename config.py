@@ -178,10 +178,10 @@ BACK_SENSORS = ("back_left", "back_right")
 #   throws off the time-based estimate. Odometry is only the backstop (used if all
 #   front sensors drop out -- see LANE_END_MARGIN_CM).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 45.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
+FRONT_STOP_DISTANCE_CM = 55.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
                                  # Median-of-two often reads ~42–43 cm at the real ~40 cm standoff;
                                  # 41 rejected 42.7 and the turn fired at ~18 cm instead.
-FRONT_SLOW_DISTANCE_CM = 55.0    # start slowing down / preparing to turn
+FRONT_SLOW_DISTANCE_CM = 68.0    # start slowing down / preparing to turn
 # NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
 
 # ---------------------------------------------------------------------------

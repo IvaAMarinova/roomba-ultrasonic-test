@@ -84,6 +84,7 @@ class Command:
     speed: float = 0.0
     steer: float = 0.0       # only used with FORWARD: -1 = full left .. +1 = full right
     reason: str = ""         # human-readable explanation, handy for logs/tests
+    wall_stop: bool = False    # pause + front scoop lift before this maneuver
 
 
 class NavigationController:
@@ -234,7 +235,8 @@ class NavigationController:
             action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
             return self._remember(Command(
                 action, speed=cfg.TURN_SPEED,
-                reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
+                reason=f"end of lane ({trigger}), turn {turn.name.lower()}",
+                wall_stop=wall_trigger))
 
         return self._cmd_cruise(readings, reason="cruising")
 
@@ -282,7 +284,8 @@ class NavigationController:
                 self.mode = Mode.TURNING
                 return self._remember(Command(
                     Action.TURN_LEFT, speed=cfg.TURN_SPEED,
-                    reason=f"end of lane ({trigger}), lane turn left"))
+                    reason=f"end of lane ({trigger}), lane turn left",
+                    wall_stop=wall_trigger))
             return self._cmd_cruise(readings, reason="sweeping sideways")
 
         if self.phase is Phase.APPROACH_HILL_CENTER:
@@ -299,7 +302,7 @@ class NavigationController:
                 self.mode = Mode.DISPOSING
                 print(f"[hill] start wall (y={self.y:.0f}) -> turn 180 and dump")
                 return self._remember(Command(
-                    Action.DISPOSE, reason="start wall -> dump"))
+                    Action.DISPOSE, reason="start wall -> dump", wall_stop=True))
             return self._cmd_cruise(readings, reason="descending slope (centre)")
 
         return self._cmd_cruise(readings, reason="cruising")
@@ -324,7 +327,7 @@ class NavigationController:
                 self.reset_sweep_transverse(origin_y=self.y)
                 self.phase = Phase.SWEEP
                 print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
-            return self._hill_spin_left_cmd(trigger)
+            return self._hill_spin_left_cmd(trigger, wall_stop=True)
         return self._cmd_cruise(readings, reason="driving to wall", hold_heading=False)
 
     def _hill_odometry_only(self):
@@ -335,10 +338,11 @@ class NavigationController:
         return self.phase in (Phase.CLIMB_FIRST, Phase.APPROACH_FAR_WALL,
                               Phase.APPROACH_LEFT_WALL)
 
-    def _hill_spin_left_cmd(self, reason):
+    def _hill_spin_left_cmd(self, reason, wall_stop=False):
         self.mode = Mode.TURNING
         return self._remember(Command(
-            Action.SPIN_LEFT, speed=self.cfg.TURN_SPEED, reason=reason))
+            Action.SPIN_LEFT, speed=self.cfg.TURN_SPEED, reason=reason,
+            wall_stop=wall_stop))
 
     def _hill_approach_center(self, readings):
         """From the right edge: spin left to face -x, creep to hill centre, spin to descend."""
@@ -456,6 +460,12 @@ class NavigationController:
 
     def _at_right_edge(self, readings):
         cfg = self.cfg
+        if self._is_transverse_sweep() and math.sin(math.radians(self.target_heading)) >= 0:
+            end_dist, agree = self._lane_end_wall(readings)
+            if (agree >= cfg.FRONT_AGREE_MIN_COUNT
+                    and self.lane_distance + end_dist
+                    >= cfg.ARENA_WIDTH_CM - cfg.RIGHT_EDGE_MARGIN_CM):
+                return True
         if self.x + cfg.LANE_WIDTH_CM >= cfg.ARENA_WIDTH_CM - cfg.RIGHT_EDGE_MARGIN_CM:
             return True
         if readings:

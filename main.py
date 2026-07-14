@@ -395,19 +395,31 @@ def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors,
     print("[return] final dump complete -- arena swept and emptied.")
 
 
-def execute(logger, cmd, motors, cfg, imu, nav, disposer):
+def _wall_stop_lift(logger, motors, front_servo, cmd):
+    """Raise the scoop while stopped so collected balls settle before turning."""
+    if not cmd.wall_stop or front_servo is None:
+        return
+    motors.stop(logger)
+    logger.log("wall_stop", step="lift_cycle", reason=cmd.reason)
+    front_servo.lift_cycle()
+
+
+def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
     if cmd.action is Action.FORWARD:
         motors.drive(logger, cmd.speed, cmd.steer)
     elif cmd.action is Action.SPIN_LEFT:
+        _wall_stop_lift(logger, motors, front_servo, cmd)
         _spin_90(logger, motors, cfg, "left", imu)
         nav.complete_spin_left()
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
+        _wall_stop_lift(logger, motors, front_servo, cmd)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
         if nav._sweep_transverse and cmd.action is Action.TURN_LEFT:
             _lane_turn_left(logger, motors, cfg, imu, nav)
         else:
             _u_turn(logger, motors, cfg, direction, imu, nav)
     elif cmd.action is Action.DISPOSE:
+        _wall_stop_lift(logger, motors, front_servo, cmd)
         _dispose(logger, motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
         motors.stop(logger)
@@ -529,10 +541,12 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
                     logger.log('babysit', ending_prematurely=True, reason='command rejected. input: ' + result)
                     break
 
-            execute(logger, cmd, motors, cfg, imu, nav, disposer)
+            execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo)
 
-            if cmd.action is not Action.FORWARD:
-                last_t = time.monotonic()   # dispose / turn blocked -- drop stale dt
+            if cmd.action is not Action.FORWARD or cmd.wall_stop:
+                last_t = time.monotonic()   # dispose / turn / wall lift blocked -- drop stale dt
+                if cmd.wall_stop:
+                    drive_elapsed = 0.0
 
             if cmd.action is Action.DISPOSE and hill:
                 nav.set_pose(x=cfg.PIT_X_CM, y=cfg.FRONT_STOP_DISTANCE_CM,
