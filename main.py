@@ -250,6 +250,73 @@ def _drive_distance(logger, motors, cfg, distance_cm, speed):
     return seconds
 
 
+def _pit_side_readings(readings):
+    """Return (front_left, front_right) when both are valid distances."""
+    from navigation import INF
+
+    fl = readings.get("front_left")
+    fr = readings.get("front_right")
+    if fl is None or fr is None or fl == INF or fr == INF:
+        return None, None
+    return fl, fr
+
+
+def _align_pit_center(logger, motors, cfg, imu, nav, sensors, period):
+    """Face across the arena (perpendicular to launch), creep until side sensors agree."""
+    align_hdg = getattr(cfg, "PIT_ALIGN_HEADING", 90.0)
+    tol = getattr(cfg, "PIT_CENTER_SENSOR_TOL_CM", 10.0)
+    step_cm = getattr(cfg, "PIT_ALIGN_CREEP_CM", 4.0)
+    max_creep = getattr(cfg, "PIT_ALIGN_MAX_CREEP_CM", 80.0)
+    cm_per_s = cfg.DRIVE_CM_PER_S * (cfg.SLOW_SPEED / cfg.DRIVE_SPEED)
+
+    readings = sensors.read_all()
+    fl, fr = _pit_side_readings(readings)
+    logger.log("pit_align", step="start", front_left=fl, front_right=fr,
+               heading=nav.heading_rel, x=nav.x, y=nav.y)
+    print(f"[pit] side sensors at start: L={fl} R={fr} (heading={nav.heading_rel:.0f}°)")
+
+    print(f"[pit] square to {align_hdg:.0f}° (perpendicular to launch heading)")
+    _spin_to_heading(logger, motors, cfg, imu, nav, align_hdg)
+    nav.target_heading = align_hdg
+    nav.complete_face_heading(align_hdg)
+
+    creeped = 0.0
+    while creeped < max_creep:
+        readings = sensors.read_all()
+        fl, fr = _pit_side_readings(readings)
+        diff = abs(fl - fr) if fl is not None and fr is not None else None
+        logger.log("pit_align", step="sample", front_left=fl, front_right=fr,
+                   diff=diff, heading=nav.heading_rel, x=nav.x)
+        print(f"[pit] L={fl} R={fr} diff={diff} x={nav.x:.0f}")
+
+        if fl is not None and fr is not None and abs(fl - fr) <= tol:
+            print(f"[pit] centred (L={fl:.0f} R={fr:.0f} cm, x={nav.x:.0f})")
+            logger.log("pit_align", step="centered", front_left=fl, front_right=fr,
+                       x=nav.x)
+            break
+
+        if fl is None or fr is None:
+            time.sleep(period)
+            continue
+
+        along = 1.0 if fl < fr else -1.0
+        creep = min(step_cm, max_creep - creeped)
+        seconds = creep / cm_per_s if cm_per_s > 0 else 0.0
+        logger.log("pit_align", step="creep", direction="+" if along > 0 else "-",
+                   cm=creep, front_left=fl, front_right=fr)
+        speed = cfg.SLOW_SPEED if along > 0 else -cfg.SLOW_SPEED
+        motors.drive(logger, speed, 0.0)
+        time.sleep(seconds)
+        motors.stop(logger)
+        nav.x += along * creep
+        creeped += creep
+    else:
+        print(f"[pit] align search limit ({max_creep:.0f} cm), x={nav.x:.0f}")
+        logger.log("pit_align", step="max_creep", cm=creeped, x=nav.x)
+
+    nav.note_blocking_maneuver()
+
+
 def _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=None):
     """Disposal maneuver for a SMALL (car-sized) pit: seat the rear over it, dump.
 
@@ -417,7 +484,8 @@ def _wall_stop_lift(logger, motors, front_servo, cmd, cfg=None):
     front_servo.lift_cycle()
 
 
-def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
+def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None,
+            sensors=None, period=0.05):
     if cmd.action is Action.FORWARD:
         motors.drive(logger, cmd.speed, cmd.steer)
     elif cmd.action is Action.SPIN_LEFT:
@@ -434,6 +502,16 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
         _u_turn(logger, motors, cfg, direction, imu, nav, front_servo)
+    elif cmd.action is Action.ALIGN_PIT:
+        _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
+        if sensors is None:
+            logger.log("pit_align", step="skip", reason="no sensors")
+        else:
+            _align_pit_center(logger, motors, cfg, imu, nav, sensors, period)
+            print("[pit] aligned -> face start wall and dump")
+            _spin_to_heading(logger, motors, cfg, imu, nav, 0.0)
+            nav.target_heading = 0.0
+            _dispose(logger, motors, cfg, imu, nav, disposer, face_heading=0.0)
     elif cmd.action is Action.DISPOSE:
         _wall_stop_lift(logger, motors, front_servo, cmd, cfg)
         _dispose(logger, motors, cfg, imu, nav, disposer)
@@ -486,7 +564,7 @@ def _sync_shovel(front_servo, nav, last_phase):
         return last_phase
     if phase is Phase.CLIMB_FIRST:
         front_servo.climb()
-    elif phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN):
+    elif phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN, Phase.BENCHMARK_ALIGN_PIT):
         front_servo.climb()
     elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
                    Phase.APPROACH_HILL_CENTER, Phase.BENCHMARK_OUT):
@@ -518,7 +596,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     hill = getattr(cfg, "HILL_MODE", False)
     benchmark = getattr(cfg, "HILL_BENCHMARK_MODE", False)
     if hill and benchmark:
-        mode_label = ("benchmark: climb -> far wall -> 180 -> return -> dump "
+        mode_label = ("benchmark: climb -> far wall -> 180 -> return -> align pit -> dump "
                       f"(collect {getattr(cfg, 'BENCHMARK_COLLECT_BLOCKS', 1)} block)")
     elif hill:
         mode_label = "hill: wall stop -> spin left -> sideways sweep -> dump"
@@ -563,16 +641,18 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
                     logger.log('babysit', ending_prematurely=True, reason='command rejected. input: ' + result)
                     break
 
-            execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo)
+            execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo,
+                    sensors=sensors, period=period)
 
             if cmd.action is not Action.FORWARD or cmd.wall_stop:
                 last_t = time.monotonic()   # dispose / turn / wall lift blocked -- drop stale dt
                 if cmd.wall_stop:
                     drive_elapsed = 0.0
 
-            if cmd.action is Action.DISPOSE and hill:
+            if cmd.action in (Action.DISPOSE, Action.ALIGN_PIT) and hill:
                 nav.set_pose(x=cfg.PIT_X_CM, y=cfg.FRONT_STOP_DISTANCE_CM,
                              target_heading=0.0)
+                nav._pit_handled = True
                 nav._done = True
                 print("[hill] dump complete -- run finished.")
                 break

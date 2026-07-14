@@ -54,6 +54,7 @@ class Action(Enum):
     SPIN_LEFT = auto()       # 90 deg left only (hill: wall stop -> spin -> next leg)
     FACE_HEADING = auto()    # blocking spin to Command.face_heading (e.g. 180 deg)
     DISPOSE = auto()
+    ALIGN_PIT = auto()       # blocking: square to pit, center on side walls, then dump
     STOP = auto()
 
 
@@ -74,6 +75,7 @@ class Phase(Enum):
     DESCEND = auto()
     BENCHMARK_OUT = auto()       # flat: centre line to far wall, collecting
     BENCHMARK_RETURN = auto()    # turn 180, return to start wall, dump
+    BENCHMARK_ALIGN_PIT = auto() # at start wall: face ±x, center with side sensors
 
 
 class Turn(Enum):
@@ -170,6 +172,8 @@ class NavigationController:
         if self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND):
             return True
         if self._benchmark_mode() and self.phase is Phase.BENCHMARK_RETURN:
+            return True
+        if self.phase is Phase.BENCHMARK_ALIGN_PIT:
             return True
         return False
 
@@ -282,6 +286,14 @@ class NavigationController:
         if self.phase is Phase.BENCHMARK_RETURN:
             return self._benchmark_return(readings)
 
+        if self.phase is Phase.BENCHMARK_ALIGN_PIT:
+            if self._pit_handled:
+                self._done = True
+                self.mode = Mode.DONE
+                return self._remember(Command(Action.STOP, reason="benchmark dump done"))
+            return self._remember(Command(
+                Action.ALIGN_PIT, reason="benchmark align pit center"))
+
         if self.phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL):
             return self._hill_wall_then_spin_left(readings)
 
@@ -361,12 +373,12 @@ class NavigationController:
         at_wall = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
                    and end_dist <= cfg.FRONT_STOP_DISTANCE_CM)
         if at_wall and self.collector.count >= need:
-            self._pit_handled = True
+            self.phase = Phase.BENCHMARK_ALIGN_PIT
             self.mode = Mode.DISPOSING
             print(f"[benchmark] start wall (y={self.y:.0f}, "
-                  f"blocks={self.collector.count}) -> dump")
+                  f"blocks={self.collector.count}) -> align pit")
             return self._remember(Command(
-                Action.DISPOSE, reason="benchmark home -> dump", wall_stop=True))
+                Action.ALIGN_PIT, reason="benchmark align pit center"))
         return self._cmd_cruise(readings, reason="benchmark: return home",
                                 hold_heading=True)
 

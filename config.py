@@ -97,6 +97,13 @@ DISPOSE_REVERSE_CM = 20.0
 DISPOSE_REVERSE_SPEED = 0.3         # slow, for precise placement (0..1)
 DISPOSE_HOLD_S = 2.0                # dwell with rear door open while balls fall out
 
+# Pit alignment at the start wall (benchmark return): face across the arena so
+# front_left / front_right see the side walls, then creep until they agree.
+PIT_ALIGN_HEADING = 90.0            # start-relative: +x, perpendicular to launch heading
+PIT_CENTER_SENSOR_TOL_CM = 10.0     # |front_left - front_right| when centred on pit
+PIT_ALIGN_CREEP_CM = 4.0            # distance per balance correction step
+PIT_ALIGN_MAX_CREEP_CM = 80.0       # safety cap on total lateral search
+
 # ---------------------------------------------------------------------------
 # Collection (future sensor).
 #   The collection servo will report how many blocks are in the bucket; when it

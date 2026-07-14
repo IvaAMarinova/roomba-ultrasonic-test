@@ -69,6 +69,10 @@ def main():
         elif cmd.action is Action.DISPOSE:
             print("    --> at the pit: dispose out the back, then keep sweeping")
             nav.complete_dispose()         # main.py runs the reverse-and-dump here
+        elif cmd.action is Action.ALIGN_PIT:
+            print("    --> align over pit with side sensors, then dump")
+            nav._pit_handled = True
+            nav.complete_dispose()
         elif cmd.action is Action.STOP:
             print("\n--> coverage complete; car stops.")
             break

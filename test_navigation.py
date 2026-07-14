@@ -748,15 +748,15 @@ def test_benchmark_return_holds_heading_gently():
     assert abs(cmd.steer) <= 0.15
 
 
-def test_benchmark_return_dumps_with_one_block():
+def test_benchmark_return_aligns_pit_with_one_block():
     n = nav(hill_cfg(HILL_BENCHMARK_MODE=True, BENCHMARK_COLLECT_BLOCKS=1))
     n.phase = Phase.BENCHMARK_RETURN
     n.target_heading = 180.0
     n.collector.add(1)
     cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
                    yaw=180.0, dt=0.0)
-    assert cmd.action is Action.DISPOSE
-    assert cmd.wall_stop
+    assert cmd.action is Action.ALIGN_PIT
+    assert n.phase is Phase.BENCHMARK_ALIGN_PIT
     assert n.mode is Mode.DISPOSING
 
 
