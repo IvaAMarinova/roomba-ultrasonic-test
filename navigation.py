@@ -135,6 +135,7 @@ class NavigationController:
         self._pit_handled = False
         self._return_origin_y = None   # y at far wall when benchmark return begins
         self._rear_persist = 0         # consecutive ticks the rear wall-stop has held
+        self._far_persist = 0          # consecutive ticks the benchmark far-wall stop has held
         self._post_align_heading = None
         self._post_align_phase = None
 
@@ -190,6 +191,7 @@ class NavigationController:
         self._last_speed = 0.0
         self._wall_persist = 0
         self._rear_persist = 0
+        self._far_persist = 0
         self.pos_source = "BRIDGE"
 
     # -- setup --------------------------------------------------------------
@@ -357,21 +359,42 @@ class NavigationController:
         return self._cmd_cruise(readings, reason="cruising")
 
     def _benchmark_out(self, readings):
-        """Centre line along +y to the far wall; scoop down and collecting."""
+        """Centre line along +y to the far wall; scoop down and collecting.
+
+        The far-wall stop is gated hard: on the hill descent the front pair
+        sees the down-slope ground at ~40-60 cm and can fake an agreeing
+        "wall", and believing it re-anchors y catastrophically (the return
+        then reverses into the start wall). The stop needs a TIGHT pair
+        spread (the cluster test alone lets two readings differ by 2x the
+        tolerance), odometry past BENCHMARK_FAR_WALL_MIN_Y_CM, and
+        persistence. Odometry is the backstop if the sensors never fire.
+        """
         cfg = self.cfg
-        end_dist, end_agree = self._lane_end_wall(readings)
-        if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
-                and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
-            self._reanchor_lane_from_wall(end_dist)
+        finite = self._enabled_front_distances(readings)
+        tight = (len(finite) >= cfg.FRONT_AGREE_MIN_COUNT
+                 and max(finite) - min(finite) <= cfg.FRONT_AGREE_TOL_CM)
+        end_dist = statistics.median(finite) if tight else INF
+        far_hold = (tight and end_dist <= cfg.FRONT_STOP_DISTANCE_CM
+                    and self.y >= getattr(cfg, "BENCHMARK_FAR_WALL_MIN_Y_CM",
+                                          200.0))
+        self._far_persist = self._far_persist + 1 if far_hold else 0
+        wall_stop = (self._far_persist
+                     >= getattr(cfg, "BENCHMARK_FAR_WALL_PERSIST_TICKS", 3))
+        odo_stop = self.y >= cfg.ARENA_LENGTH_CM - cfg.FRONT_STOP_DISTANCE_CM
+        if wall_stop or odo_stop:
+            if wall_stop:
+                self._reanchor_lane_from_wall(end_dist)
+                src = f"far wall {end_dist:.0f}cm"
+            else:
+                src = "odometry backstop"   # no believed wall: keep odometry y
             self.phase = Phase.BENCHMARK_RETURN
             self.lane_distance = 0.0
             self._return_origin_y = self.y
             self.target_heading = 0.0    # stay facing the far wall; reverse home
             self.note_blocking_maneuver()
-            print(f"[benchmark] far wall (y={self.y:.0f}) -> reverse home (no 180)")
+            print(f"[benchmark] {src} (y={self.y:.0f}) -> reverse home (no 180)")
             return self._remember(Command(
-                Action.STOP, reason=f"benchmark far wall {end_dist:.0f}cm",
-                wall_stop=True))
+                Action.STOP, reason=f"benchmark {src}", wall_stop=True))
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
 
@@ -403,13 +426,14 @@ class NavigationController:
         return INF, len(finite)
 
     def _benchmark_return(self, readings):
-        """Reverse straight home, nose still on the far wall, IMU holding heading 0.
+        """Reverse straight home, nose still on the far wall, open loop.
 
-        No 180 turn: the back sensors watch for the start wall (K-of-2 agree,
-        held REAR_WALL_PERSIST_TICKS, only after BENCHMARK_MIN_RETURN_CM of
-        travel so junk at departure can't fire it), with odometry y as the
-        backstop if they never agree. Front readings are ignored here -- they
-        see the far wall, which is behind us in travel terms.
+        No 180 turn: the back sensors watch for the start wall (at least
+        BACK_AGREE_MIN_COUNT reporting, held REAR_WALL_PERSIST_TICKS, only
+        after BENCHMARK_MIN_RETURN_CM of travel so junk at departure can't
+        fire it), with odometry y as the backstop if they never agree. Front
+        readings are ignored here -- they see the far wall, which is behind
+        us in travel terms.
         """
         cfg = self.cfg
         rear_stop = getattr(cfg, "BACK_STOP_DISTANCE_CM", 25.0)

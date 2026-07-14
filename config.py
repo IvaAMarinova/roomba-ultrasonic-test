@@ -41,15 +41,23 @@ HILL_SWEEP_NUM_LANES = math.ceil(HILL_SWEEP_HALF_Y_CM / LANE_WIDTH_CM)
 # Climbing/descending the slope is much easier in the centre of the hill.
 # Set HILL_MODE = False to restore the old full-arena serpentine + mid-sweep pit.
 # HILL_BENCHMARK_MODE = True skips the sideways sweep: climb -> far wall ->
-# REVERSE straight home (no 180 -- the IMU holds heading 0 while backing up and
-# the BACK sensors stop at the start wall) -> dump (collect
-# BENCHMARK_COLLECT_BLOCKS on the flat).
+# REVERSE straight home (no 180, open loop -- the BACK sensors stop at the
+# start wall) -> dump (collect BENCHMARK_COLLECT_BLOCKS on the flat).
 # ---------------------------------------------------------------------------
 HILL_MODE = True
 HILL_BENCHMARK_MODE = True
 BENCHMARK_COLLECT_BLOCKS = 1
 BENCHMARK_LIFT_INTERVAL_S = 4.0   # stop + scoop this often on the flat (benchmark outbound)
 BENCHMARK_MIN_RETURN_CM = 55.0   # reverse travel before a rear wall stop counts as home
+# Far-wall stop gating for the benchmark out leg. Just past the crest the front
+# pair sees the DOWN-SLOPE GROUND at ~40-60 cm and can fake an agreeing "wall"
+# (2026-07-14 run: phantom stop at y~64 re-anchored y to 258 and the return
+# smashed the pit wall). The stop is only believed once odometry says we are
+# well past the hill (edge ~150, real wall ~255) AND it holds for several ticks
+# AND the pair spread is tight. If the sensors never fire, the odometry
+# backstop at ARENA_LENGTH - FRONT_STOP_DISTANCE ends the leg instead.
+BENCHMARK_FAR_WALL_MIN_Y_CM = 200.0   # ignore far-wall stops before odometry passes this
+BENCHMARK_FAR_WALL_PERSIST_TICKS = 3  # consecutive agreeing ticks before stopping
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0 - 15   # horizontal centre of the slope (start + climb end)
 HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
@@ -288,7 +296,12 @@ BENCHMARK_REVERSE_SPEED = SLOW_SPEED  # reverse duty on the way home
 REVERSE_STEER_TRIM = 0.0
 BACK_STOP_DISTANCE_CM = 25.0          # rear gap to the start wall that ends the reverse leg
 BACK_AGREE_TOL_CM = FRONT_AGREE_TOL_CM  # back pair must agree within this to be the wall
-BACK_AGREE_MIN_COUNT = 2              # both back sensors must see it
+BACK_AGREE_MIN_COUNT = 1              # ONE back sensor is enough: back_right read null for an
+                                      # entire run (2026-07-14) and requiring both meant the rear
+                                      # stop never fired -- the car ground into the pit wall.
+                                      # Junk lows are filtered by BENCHMARK_MIN_RETURN_CM +
+                                      # REAR_WALL_PERSIST_TICKS; a disagreeing pair still returns
+                                      # no wall (see navigation._rear_wall).
 REAR_WALL_PERSIST_TICKS = 2           # consecutive ticks before trusting the rear wall stop
 
 # Fixed mechanical trim on forward drives (no IMU). Compensates for uneven
