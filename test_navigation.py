@@ -571,6 +571,19 @@ def test_hill_approach_wall_stops_then_spins():
     assert n.phase is Phase.APPROACH_LEFT_WALL
 
 
+def test_hill_approach_wall_stops_with_bad_odometry():
+    """Arena test: short odometry must not block a real wall contact."""
+    cfg = hill_cfg()
+    n = nav(cfg)
+    n.phase = Phase.APPROACH_FAR_WALL
+    n.lane_distance = 50.0
+    n.y = 50.0
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=0.0, dt=0.0)
+    assert cmd.action is Action.SPIN_LEFT
+    assert n.phase is Phase.APPROACH_LEFT_WALL
+
+
 def test_hill_left_wall_starts_sweep():
     n = nav(hill_cfg())
     n.phase = Phase.APPROACH_LEFT_WALL

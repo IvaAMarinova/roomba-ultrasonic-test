@@ -249,6 +249,7 @@ class NavigationController:
         if self.phase is Phase.CLIMB_FIRST:
             if self.y >= cfg.HILL_TOP_Y_CM:
                 self.phase = Phase.APPROACH_FAR_WALL
+                self.lane_distance = self.y - cfg.START_Y_CM
                 print(f"[hill] top of slope (y={self.y:.0f}) -> drive to wall")
             return self._cmd_cruise(readings, reason="climbing slope (centre)",
                                      hold_heading=False)
@@ -304,12 +305,18 @@ class NavigationController:
         return self._cmd_cruise(readings, reason="cruising")
 
     def _hill_wall_then_spin_left(self, readings):
-        """Drive until front sensors see the wall, then spin 90 deg left."""
-        wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
-            self._lane_end_state(readings))
-        if wall_trigger or odo_backstop:
-            if wall_trigger and trigger.startswith("wall") and "contact" not in trigger:
-                self._reanchor_lane_from_wall(end_dist)
+        """Drive until front sensors see the wall, then spin 90 deg left.
+
+        Sensor-only stop: hill approach legs are short and odometry is still
+        climbing-relative, so the full-lane fusion in _lane_end_state would
+        reject a real wall contact and let the car ram it.
+        """
+        cfg = self.cfg
+        end_dist, end_agree = self._lane_end_wall(readings)
+        if (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
+                and end_dist <= cfg.FRONT_STOP_DISTANCE_CM):
+            self._reanchor_lane_from_wall(end_dist)
+            trigger = f"wall {end_dist:.0f}cm (x{end_agree} agree)"
             if self.phase is Phase.APPROACH_FAR_WALL:
                 self.phase = Phase.APPROACH_LEFT_WALL
                 print("[hill] wall ahead -> spin left, seek left wall")
@@ -317,8 +324,16 @@ class NavigationController:
                 self.reset_sweep_transverse(origin_y=self.y)
                 self.phase = Phase.SWEEP
                 print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
-            return self._hill_spin_left_cmd(trigger or "wall stop")
+            return self._hill_spin_left_cmd(trigger)
         return self._cmd_cruise(readings, reason="driving to wall", hold_heading=False)
+
+    def _hill_odometry_only(self):
+        """Hill climb/approach: trust integrated odometry, not wall re-anchors."""
+        cfg = self.cfg
+        if not getattr(cfg, "HILL_MODE", False):
+            return False
+        return self.phase in (Phase.CLIMB_FIRST, Phase.APPROACH_FAR_WALL,
+                              Phase.APPROACH_LEFT_WALL)
 
     def _hill_spin_left_cmd(self, reason):
         self.mode = Mode.TURNING
@@ -623,7 +638,8 @@ class NavigationController:
                          and abs(expected_gap - front_dist) <= cfg.WALL_EXPECT_TOL_CM)
             near_start = self.lane_distance < lane_len * 0.35
             far_phantom = front_dist > lane_len * 0.75
-            if plausible and not (near_start and far_phantom) and heading_ok:
+            if (plausible and not (near_start and far_phantom) and heading_ok
+                    and not self._hill_odometry_only()):
                 self.lane_distance = max(0.0, min(lane_len - front_dist, lane_len))
                 self.front_wall_cm = front_dist
                 self.pos_source = "WALL"
