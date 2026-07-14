@@ -88,7 +88,7 @@ PIT_Y_CM = 0.0                      # pit centre Y: on the start wall (y=0) (TOD
 # this MUST be >= FRONT_STOP_DISTANCE_CM or the end-of-lane turn fires first and the
 # car never disposes. Disposal is also gated to the pit's own lane, so a generous
 # radius can't false-trigger on a neighbouring lane.
-PIT_ARRIVAL_RADIUS_CM = 50.0
+PIT_ARRIVAL_RADIUS_CM = 60.0
 DISPOSE_BACK_INTO_PIT = True        # True = orient the back toward the pit before reversing
 # How far to reverse (after orienting) to place the rear directly over the small
 # pit, and how fast. TUNE on the real setup so the rear OVERHANGS the pit but the
@@ -197,10 +197,10 @@ BACK_SENSORS = ("back_left", "back_right")
 #   throws off the time-based estimate. Odometry is only the backstop (used if all
 #   front sensors drop out -- see LANE_END_MARGIN_CM).
 # ---------------------------------------------------------------------------
-FRONT_STOP_DISTANCE_CM = 55.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
+FRONT_STOP_DISTANCE_CM = 60.0    # PRIMARY: turn when the end wall is this close (fixed standoff)
                                  # Median-of-two often reads ~42–43 cm at the real ~40 cm standoff;
                                  # 41 rejected 42.7 and the turn fired at ~18 cm instead.
-FRONT_SLOW_DISTANCE_CM = 68.0    # start slowing down / preparing to turn
+FRONT_SLOW_DISTANCE_CM = 73.0    # start slowing down / preparing to turn
 # NOTE: STOP must be < SLOW, and both are clearances (small), NOT sensor range.
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ FRONT_AGREE_MIN_COUNT = 2        # need at least this many agreeing (K of 3)
 WALL_EXPECT_TOL_CM = 70.0        # how far odometry may disagree with the wall and still trust it (generous: odometry is rough)
 WALL_PERSIST_TICKS = 1           # consecutive ticks the wall-stop must hold before turning
 WALL_HEADING_ALIGN_DEG = 30.0    # only fuse / stop on a front wall when square to the lane heading
-WALL_CONTACT_STOP_CM = 28.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
+WALL_CONTACT_STOP_CM = 33.0        # agree + this close -> end lane even if odometry disagrees (not at pit)
                                  # 28 not 25: medians land ~25.5 at contact; 25.0 missed and delayed the turn
 
 # ---------------------------------------------------------------------------
