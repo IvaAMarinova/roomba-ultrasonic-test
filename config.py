@@ -22,6 +22,9 @@ LANE_WIDTH_CM = 35.0
 # (coverage complete). Override the number here if you want to sweep fewer/more
 # lanes than the plain division gives (e.g. partial coverage, or extra overlap).
 NUM_LANES = math.ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)   # e.g. 210 / 35 = 6
+# Hill-mode sideways sweep: lanes run across ARENA_WIDTH; step along +y until half.
+HILL_SWEEP_HALF_Y_CM = ARENA_LENGTH_CM / 2.0   # stop sweeping at mid-length, edge of hill
+HILL_SWEEP_NUM_LANES = math.ceil(HILL_SWEEP_HALF_Y_CM / LANE_WIDTH_CM)
 
 # Forward travel speed (cm/s) is CALIBRATED and DERIVED near the motion parameters
 # below (FULL_SPEED_CM_PER_S -> DRIVE_CM_PER_S), so it tracks DRIVE_SPEED instead of
@@ -30,19 +33,17 @@ NUM_LANES = math.ceil(ARENA_WIDTH_CM / LANE_WIDTH_CM)   # e.g. 210 / 35 = 6
 # ---------------------------------------------------------------------------
 # Hill strategy (slope at start, collect on the flat end, dump once at finish).
 #   CLIMB_FIRST            -- up the slope through the centre, shovel raised.
-#   REPOSITION_TO_LEFT     -- blocking: centre -> left wall (sweep start).
-#   SWEEP                  -- serpentine on the flat; scoop when y >= COLLECTION_START_Y_CM.
-#   REPOSITION_FOR_DESCEND -- blocking: right wall -> vertical centre (descend start).
-#   DESCEND                -- downhill through the centre, shovel raised, no scooping.
-#   TO_PIT                 -- blocking drive in main.py: along start wall -> centre -> dump.
+#   APPROACH_FAR_WALL      -- sensors: drive to wall, spin 90 deg left.
+#   APPROACH_LEFT_WALL     -- sensors: drive to left wall, spin 90 deg left.
+#   SWEEP                  -- sideways: wall stop, spin left, repeat.
+#   APPROACH_HILL_CENTER   -- spin left, creep to hill centre, descend.
+#   DESCEND                -- downhill through the centre; wall stop -> dump.
 # Climbing/descending the slope is much easier in the centre of the hill.
 # Set HILL_MODE = False to restore the old full-arena serpentine + mid-sweep pit.
 # ---------------------------------------------------------------------------
 HILL_MODE = True
 HILL_CLIMB_X_CM = ARENA_WIDTH_CM / 2.0   # horizontal centre of the slope (start + climb end)
-DESCEND_CENTER_Y_CM = ARENA_LENGTH_CM / 2.0  # vertical centre for the downhill leg
-HILL_TOP_Y_CM = 55.0                # top of the slope; reposition to left wall next (TUNE)
-COLLECTION_START_Y_CM = 130.0       # only lift the scoop at the arena end (TUNE)
+HILL_TOP_Y_CM = 55.0                # top of the slope; reposition for sweep next (TUNE)
 RIGHT_EDGE_MARGIN_CM = 12.0         # x + LANE_WIDTH past this -> right wall
 RIGHT_WALL_STOP_CM = 22.0           # front_right this close -> hugging right wall
 LEFT_WALL_STOP_CM = 22.0            # front_left this close -> hugging left wall

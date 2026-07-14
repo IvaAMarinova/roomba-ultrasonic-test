@@ -50,6 +50,7 @@ class Action(Enum):
     FORWARD = auto()
     TURN_LEFT = auto()
     TURN_RIGHT = auto()
+    SPIN_LEFT = auto()       # 90 deg left only (hill: wall stop -> spin -> next leg)
     DISPOSE = auto()
     STOP = auto()
 
@@ -64,11 +65,11 @@ class Mode(Enum):
 class Phase(Enum):
     """Macro stages for HILL_MODE (slope -> sweep -> descend -> pit)."""
     CLIMB_FIRST = auto()
-    REPOSITION_TO_LEFT = auto()
+    APPROACH_FAR_WALL = auto()
+    APPROACH_LEFT_WALL = auto()
     SWEEP = auto()
-    REPOSITION_FOR_DESCEND = auto()
+    APPROACH_HILL_CENTER = auto()
     DESCEND = auto()
-    TO_PIT = auto()
 
 
 class Turn(Enum):
@@ -127,6 +128,10 @@ class NavigationController:
         # Hill strategy phase (None when HILL_MODE is off).
         self.phase = Phase.CLIMB_FIRST if getattr(cfg, "HILL_MODE", False) else None
 
+        # Sideways hill sweep: lanes run along ARENA_WIDTH, step along +y.
+        self._sweep_transverse = False
+        self._sweep_origin_y = cfg.START_Y_CM
+
         # Wall-fusion state (updated every tick by _update_pose).
         self.front_wall_cm = INF     # believed distance to the end wall, or INF
         self.front_agree = 0         # how many front sensors agreed this tick
@@ -142,8 +147,7 @@ class NavigationController:
         """True when the front scoop should run lift cycles."""
         if not getattr(self.cfg, "HILL_MODE", False):
             return True
-        return (self.phase is Phase.SWEEP
-                and self.y >= self.cfg.COLLECTION_START_Y_CM)
+        return self.phase is Phase.SWEEP
 
     @property
     def wants_climb_shovel(self):
@@ -233,54 +237,52 @@ class NavigationController:
         return self._cmd_cruise(readings, reason="cruising")
 
     def _decide_hill(self, readings, yaw, dt):
-        """Slope climb -> end-zone sweep -> descend -> pit (no mid-run disposal)."""
+        """Centre climb -> sideways sweep -> centre descend -> dump at pit."""
         cfg = self.cfg
 
         if self._done:
             self.mode = Mode.DONE
             return self._remember(Command(Action.STOP, reason="run complete"))
 
-        if self.phase is Phase.TO_PIT:
-            self.mode = Mode.DONE
-            return self._remember(Command(Action.STOP, reason="at start wall -> pit"))
-
         if self.phase is Phase.CLIMB_FIRST:
             if self.y >= cfg.HILL_TOP_Y_CM:
-                self.phase = Phase.REPOSITION_TO_LEFT
-                print(f"[hill] top of slope (y={self.y:.0f}) -> reposition to left wall")
+                self.phase = Phase.APPROACH_FAR_WALL
+                print(f"[hill] top of slope (y={self.y:.0f}) -> drive to wall")
             return self._cmd_cruise(readings, reason="climbing slope (centre)")
 
-        if self.phase is Phase.REPOSITION_TO_LEFT:
-            self.mode = Mode.DONE
-            return self._remember(Command(
-                Action.STOP, reason="reposition to left wall"))
+        if self.phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL):
+            return self._hill_wall_then_spin_left(readings)
 
         if self.phase is Phase.SWEEP:
+            if (self._lane_index == 0 and self.lane_distance < 10.0
+                    and abs(angle_diff(self.target_heading, self.heading_rel))
+                    > getattr(cfg, "ORIENT_SKIP_DEG", 15.0)):
+                return self._hill_spin_left_cmd("align for sideways sweep")
             wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
                 self._lane_end_state(readings))
             if wall_trigger or odo_backstop:
-                if self._at_right_edge(readings):
-                    self.phase = Phase.REPOSITION_FOR_DESCEND
+                if self._at_right_edge(readings) and self._at_sweep_half():
+                    self.phase = Phase.APPROACH_HILL_CENTER
                     self._wall_persist = 0
-                    print("[hill] right wall -> reposition to centre for descend")
-                    self.mode = Mode.DONE
-                    return self._remember(Command(
-                        Action.STOP, reason="right wall -> reposition for descend"))
+                    print("[hill] right edge at mid-length -> drive to hill centre")
+                    return self._hill_spin_left_cmd("right edge -> spin left")
                 if wall_trigger and trigger.startswith("wall") and "contact" not in trigger:
                     self._reanchor_lane_from_wall(end_dist)
-                turn = self._next_serpentine_turn
+                if self._lane_index >= (
+                        getattr(cfg, "HILL_SWEEP_NUM_LANES", cfg.NUM_LANES) - 1):
+                    self.phase = Phase.APPROACH_HILL_CENTER
+                    self._wall_persist = 0
+                    print("[hill] swept to mid-length -> drive to hill centre")
+                    return self._hill_spin_left_cmd("sweep half done -> spin left")
                 self._advance_serpentine()
                 self.mode = Mode.TURNING
-                action = Action.TURN_LEFT if turn is Turn.LEFT else Action.TURN_RIGHT
                 return self._remember(Command(
-                    action, speed=cfg.TURN_SPEED,
-                    reason=f"end of lane ({trigger}), turn {turn.name.lower()}"))
-            return self._cmd_cruise(readings, reason="sweeping")
+                    Action.TURN_LEFT, speed=cfg.TURN_SPEED,
+                    reason=f"end of lane ({trigger}), lane turn left"))
+            return self._cmd_cruise(readings, reason="sweeping sideways")
 
-        if self.phase is Phase.REPOSITION_FOR_DESCEND:
-            self.mode = Mode.DONE
-            return self._remember(Command(
-                Action.STOP, reason="reposition for descend"))
+        if self.phase is Phase.APPROACH_HILL_CENTER:
+            return self._hill_approach_center(readings)
 
         if self.phase is Phase.DESCEND:
             wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
@@ -289,14 +291,57 @@ class NavigationController:
                         or (wall_trigger and self.y <= cfg.HILL_TOP_Y_CM))
             if at_start or (wall_trigger and self.target_heading == 180.0
                             and self.y <= cfg.HILL_TOP_Y_CM):
-                self.phase = Phase.TO_PIT
-                print(f"[hill] start wall (y={self.y:.0f}) -> pit approach")
-                self.mode = Mode.DONE
+                self._pit_handled = True
+                self.mode = Mode.DISPOSING
+                print(f"[hill] start wall (y={self.y:.0f}) -> turn 180 and dump")
                 return self._remember(Command(
-                    Action.STOP, reason="at start wall -> pit"))
+                    Action.DISPOSE, reason="start wall -> dump"))
             return self._cmd_cruise(readings, reason="descending slope (centre)")
 
         return self._cmd_cruise(readings, reason="cruising")
+
+    def _hill_wall_then_spin_left(self, readings):
+        """Drive until front sensors see the wall, then spin 90 deg left."""
+        wall_trigger, odo_backstop, end_dist, end_agree, trigger = (
+            self._lane_end_state(readings))
+        if wall_trigger or odo_backstop:
+            if wall_trigger and trigger.startswith("wall") and "contact" not in trigger:
+                self._reanchor_lane_from_wall(end_dist)
+            if self.phase is Phase.APPROACH_FAR_WALL:
+                self.phase = Phase.APPROACH_LEFT_WALL
+                print("[hill] wall ahead -> spin left, seek left wall")
+            else:
+                self.reset_sweep_transverse(origin_y=self.y)
+                self.phase = Phase.SWEEP
+                print(f"[hill] left wall (x={self.x:.0f}) -> sideways sweep")
+            return self._hill_spin_left_cmd(trigger or "wall stop")
+        return self._cmd_cruise(readings, reason="driving to wall")
+
+    def _hill_spin_left_cmd(self, reason):
+        self.mode = Mode.TURNING
+        return self._remember(Command(
+            Action.SPIN_LEFT, speed=self.cfg.TURN_SPEED, reason=reason))
+
+    def _hill_approach_center(self, readings):
+        """From the right edge: spin left to face -x, creep to hill centre, spin to descend."""
+        cfg = self.cfg
+        center_x = getattr(cfg, "HILL_CLIMB_X_CM", cfg.ARENA_WIDTH_CM / 2.0)
+
+        if abs(angle_diff(self.target_heading, -90.0)) > 5.0:
+            return self._hill_spin_left_cmd("face -x for hill centre")
+
+        if self.x > center_x + 5.0:
+            return self._cmd_cruise(readings, reason="driving to hill centre")
+
+        self._sweep_transverse = False
+        self.target_heading = 180.0
+        if abs(angle_diff(self.heading_rel, 180.0)) > cfg.ORIENT_SKIP_DEG:
+            return self._hill_spin_left_cmd("face downhill")
+        self.lane_distance = cfg.ARENA_LENGTH_CM - (self.y - cfg.START_Y_CM)
+        self.phase = Phase.DESCEND
+        self.note_blocking_maneuver()
+        print(f"[hill] at centre (x={self.x:.0f}, y={self.y:.0f}) -> descend")
+        return self._cmd_cruise(readings, reason="descending slope (centre)")
 
     def _cmd_cruise(self, readings, reason="", extra_steer=0.0):
         """Forward at cruise speed with IMU heading-hold (+ optional wall-hug trim)."""
@@ -309,20 +354,39 @@ class NavigationController:
         return self._remember(Command(
             Action.FORWARD, speed=speed, steer=steer, reason=reason))
 
+    def _lane_axis_length(self):
+        """Lane length along the current heading (width when driving ±x, length when ±y)."""
+        cfg = self.cfg
+        if self._heading_is_across():
+            return cfg.ARENA_WIDTH_CM
+        return cfg.ARENA_LENGTH_CM
+
+    def _heading_is_across(self):
+        return (abs(math.sin(math.radians(self.target_heading)))
+                >= abs(math.cos(math.radians(self.target_heading))))
+
+    def _is_transverse_sweep(self):
+        return self._sweep_transverse and self.phase is Phase.SWEEP
+
+    def _at_sweep_half(self):
+        half_y = getattr(self.cfg, "HILL_SWEEP_HALF_Y_CM",
+                         self.cfg.ARENA_LENGTH_CM / 2.0)
+        return self.y >= half_y - self.cfg.LANE_WIDTH_CM
+
     def _lane_end_state(self, readings):
         """Return (wall_trigger, odo_backstop, end_dist, end_agree, trigger_reason)."""
         cfg = self.cfg
+        lane_len = self._lane_axis_length()
         end_dist, end_agree = self._lane_end_wall(readings)
-        expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
+        expected_gap = max(0.0, lane_len - self.lane_distance)
         wall_plausible = (end_dist >= expected_gap - cfg.WALL_EXPECT_TOL_CM)
         heading_ok = (not self._has_heading
                       or abs(angle_diff(self.target_heading, self.heading_rel))
                       <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
         contact_close = getattr(cfg, "WALL_CONTACT_STOP_CM", 25.0)
         standoff_aligned = end_dist >= expected_gap - cfg.FRONT_STOP_DISTANCE_CM
-        inferred_ld = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
-                                   cfg.ARENA_LENGTH_CM))
-        inferred_near_far_end = (inferred_ld >= (cfg.ARENA_LENGTH_CM
+        inferred_ld = max(0.0, min(lane_len - end_dist, lane_len))
+        inferred_near_far_end = (inferred_ld >= (lane_len
                                                  - cfg.LANE_END_MARGIN_CM
                                                  - cfg.FRONT_STOP_DISTANCE_CM))
         odo_matches_inferred = (abs(inferred_ld - self.lane_distance)
@@ -331,9 +395,8 @@ class NavigationController:
                              and inferred_near_far_end
                              and odo_matches_inferred)
         near_far_end = (self.lane_distance + end_dist
-                        >= cfg.ARENA_LENGTH_CM - cfg.WALL_EXPECT_TOL_CM)
-        odo_still_near_start = (self.lane_distance
-                                < cfg.ARENA_LENGTH_CM * 0.35)
+                        >= lane_len - cfg.WALL_EXPECT_TOL_CM)
+        odo_still_near_start = (self.lane_distance < lane_len * 0.35)
         contact_hold = (end_dist <= contact_close
                         and (near_far_end or odo_still_near_start))
         end_hold = (end_agree >= cfg.FRONT_AGREE_MIN_COUNT
@@ -345,7 +408,7 @@ class NavigationController:
         self._wall_persist = self._wall_persist + 1 if end_hold else 0
         wall_trigger = self._wall_persist >= cfg.WALL_PERSIST_TICKS
         odo_backstop = (self.pos_source != "WALL"
-                        and self.lane_distance >= (cfg.ARENA_LENGTH_CM - cfg.LANE_END_MARGIN_CM)
+                        and self.lane_distance >= (lane_len - cfg.LANE_END_MARGIN_CM)
                         and heading_ok)
         if wall_trigger:
             if wall_plausible or standoff_aligned or inferred_standoff:
@@ -363,8 +426,11 @@ class NavigationController:
 
     def _reanchor_lane_from_wall(self, end_dist):
         cfg = self.cfg
-        self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - end_dist,
-                                          cfg.ARENA_LENGTH_CM))
+        lane_len = self._lane_axis_length()
+        self.lane_distance = max(0.0, min(lane_len - end_dist, lane_len))
+        if self._is_transverse_sweep() or self._heading_is_across():
+            self._sync_lateral_pose()
+            return
         forward = math.cos(math.radians(self.target_heading)) >= 0.0
         self.y = (cfg.START_Y_CM + self.lane_distance if forward
                   else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
@@ -379,27 +445,37 @@ class NavigationController:
                 return True
         return False
 
-    def complete_turn(self):
-        """Call after main.py finishes the blocking U-turn maneuver.
+    def complete_spin_left(self):
+        """Call after a 90 deg left spin: update heading and start a fresh lane leg."""
+        self.target_heading = angle_diff(self.target_heading - 90.0, 0.0)
+        self.lane_distance = 0.0
+        self.mode = Mode.DRIVING
+        self.note_blocking_maneuver()
 
-        Steps to the next lane (heading reversed ~180, one lane over) and resets
-        the per-lane fusion state. Cross-lane x comes from the lane index, so the
-        sideways step is exact regardless of how the physical shift went.
-        """
+    def complete_turn(self):
+        """Call after main.py finishes the blocking U-turn maneuver."""
         cfg = self.cfg
         self._lane_index += 1
-        self.x += self._sweep_sign * cfg.LANE_WIDTH_CM   # step one lane sideways
-        self.target_heading = angle_diff(self.target_heading + 180.0, 0.0)
-        # Keep along-lane position across the U-turn: resetting to 0 would snap y
-        # to the start wall whenever the next lane drives +y (the usual case after
-        # turning at y=0), falsely placing the car at the pit.
-        along = self.y - cfg.START_Y_CM
-        forward = math.cos(math.radians(self.target_heading)) >= 0.0
-        if forward:
-            self.lane_distance = max(0.0, min(along, cfg.ARENA_LENGTH_CM))
+        if self._is_transverse_sweep():
+            self.y += self._sweep_sign * cfg.LANE_WIDTH_CM
+            self.target_heading = angle_diff(self.target_heading + 180.0, 0.0)
+            along = self.x - cfg.START_X_CM
+            east = math.sin(math.radians(self.target_heading)) >= 0.0
+            if east:
+                self.lane_distance = max(0.0, min(along, cfg.ARENA_WIDTH_CM))
+            else:
+                self.lane_distance = max(0.0, min(cfg.ARENA_WIDTH_CM - along,
+                                                  cfg.ARENA_WIDTH_CM))
         else:
-            self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - along,
-                                              cfg.ARENA_LENGTH_CM))
+            self.x += self._sweep_sign * cfg.LANE_WIDTH_CM
+            self.target_heading = angle_diff(self.target_heading + 180.0, 0.0)
+            along = self.y - cfg.START_Y_CM
+            forward = math.cos(math.radians(self.target_heading)) >= 0.0
+            if forward:
+                self.lane_distance = max(0.0, min(along, cfg.ARENA_LENGTH_CM))
+            else:
+                self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - along,
+                                                  cfg.ARENA_LENGTH_CM))
         self.mode = Mode.DRIVING
         self.note_blocking_maneuver()
 
@@ -433,8 +509,17 @@ class NavigationController:
             self.x = x
         if target_heading is not None:
             self.target_heading = target_heading
+        lane_len = self._lane_axis_length()
         if lane_distance is not None:
-            self.lane_distance = max(0.0, min(lane_distance, cfg.ARENA_LENGTH_CM))
+            self.lane_distance = max(0.0, min(lane_distance, lane_len))
+        elif self._is_transverse_sweep() and x is not None:
+            along = x - cfg.START_X_CM
+            east = math.sin(math.radians(self.target_heading)) >= 0.0
+            if east:
+                self.lane_distance = max(0.0, min(along, cfg.ARENA_WIDTH_CM))
+            else:
+                self.lane_distance = max(0.0, min(cfg.ARENA_WIDTH_CM - along,
+                                                  cfg.ARENA_WIDTH_CM))
         elif y is not None:
             forward = math.cos(math.radians(self.target_heading)) >= 0.0
             along = y - cfg.START_Y_CM
@@ -447,16 +532,21 @@ class NavigationController:
             self.y = y
         self._wall_persist = 0
 
-    def reset_sweep_from_left(self):
-        """Re-anchor serpentine state after blocking drive to the left wall."""
+    def reset_sweep_transverse(self, origin_y=None):
+        """Start sideways serpentine: lanes along width, stepping +y from left wall."""
         cfg = self.cfg
-        first = getattr(cfg, "SERPENTINE_FIRST_TURN", "left").lower()
+        self._sweep_transverse = True
         self._lane_index = 0
-        self._next_serpentine_turn = Turn.RIGHT if first == "right" else Turn.LEFT
-        self._sweep_sign = 1.0 if first == "right" else -1.0
+        self._next_serpentine_turn = Turn.LEFT
+        self._sweep_sign = 1.0
         self._last_turn = None
         self._pit_handled = False
-        self.target_heading = 0.0
+        self._sweep_origin_y = origin_y if origin_y is not None else self.y
+        self.target_heading = 90.0
+        standoff = cfg.FRONT_STOP_DISTANCE_CM
+        self.x = cfg.START_X_CM + standoff
+        self.y = self._sweep_origin_y
+        self.lane_distance = standoff
         self.note_blocking_maneuver()
 
     def bearing_to_pit(self):
@@ -514,7 +604,6 @@ class NavigationController:
             self.lane_distance += (cfg.DRIVE_CM_PER_S
                                    * (self._last_speed / cfg.DRIVE_SPEED) * dt)
 
-        forward = math.cos(math.radians(self.target_heading)) >= 0.0
         heading_ok = (not self._has_heading
                       or abs(angle_diff(self.target_heading, self.heading_rel))
                       <= getattr(cfg, "WALL_HEADING_ALIGN_DEG", 30.0))
@@ -522,24 +611,18 @@ class NavigationController:
         # Front wall: distance + how many sensors agree on it.
         front_dist, agree = self._front_wall(readings)
         self.front_agree = agree
+        lane_len = self._lane_axis_length()
         if agree >= cfg.FRONT_AGREE_MIN_COUNT:
-            # Believable ONLY if it's near where odometry expects the end wall --
-            # this rejects a mid-lane object (a block) that fooled the agreement.
-            expected_gap = max(0.0, cfg.ARENA_LENGTH_CM - self.lane_distance)
-            plausible = (front_dist <= cfg.ARENA_LENGTH_CM
+            expected_gap = max(0.0, lane_len - self.lane_distance)
+            plausible = (front_dist <= lane_len
                          and abs(expected_gap - front_dist) <= cfg.WALL_EXPECT_TOL_CM)
-            # Reject a far phantom wall when odometry says we're still near the
-            # start of the lane (e.g. pit gap / open area behind the rover).
-            near_start = self.lane_distance < cfg.ARENA_LENGTH_CM * 0.35
-            far_phantom = front_dist > cfg.ARENA_LENGTH_CM * 0.75
+            near_start = self.lane_distance < lane_len * 0.35
+            far_phantom = front_dist > lane_len * 0.75
             if plausible and not (near_start and far_phantom) and heading_ok:
-                self.lane_distance = max(0.0, min(cfg.ARENA_LENGTH_CM - front_dist,
-                                                  cfg.ARENA_LENGTH_CM))
+                self.lane_distance = max(0.0, min(lane_len - front_dist, lane_len))
                 self.front_wall_cm = front_dist
                 self.pos_source = "WALL"
             else:
-                # Agreed, but not where a wall belongs -> an obstacle to collect,
-                # not the lane end. Report it (so we slow) but don't trust it as position.
                 self.front_wall_cm = front_dist
                 self.pos_source = "BRIDGE"
         else:
@@ -552,17 +635,30 @@ class NavigationController:
             self.front_wall_cm = near_dist
             self.front_agree = near_agree
 
-        self.lane_distance = max(0.0, min(self.lane_distance, cfg.ARENA_LENGTH_CM))
+        self.lane_distance = max(0.0, min(self.lane_distance, lane_len))
 
-        # Along-lane y from lane_distance in the current lane's direction. Cross-lane
-        # x comes purely from lane counting (set in complete_turn); the IMU
-        # heading-hold keeps the car square so it stays centred in the lane.
-        self.y = (cfg.START_Y_CM + self.lane_distance if forward
-                  else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
+        if self._is_transverse_sweep() or self._heading_is_across():
+            self._sync_lateral_pose()
+        else:
+            forward = math.cos(math.radians(self.target_heading)) >= 0.0
+            self.y = (cfg.START_Y_CM + self.lane_distance if forward
+                      else cfg.START_Y_CM + cfg.ARENA_LENGTH_CM - self.lane_distance)
 
         # Leaving the pit zone re-arms disposal for the next visit.
         if self._pit_handled and not self._at_pit():
             self._pit_handled = False
+
+    def _sync_lateral_pose(self):
+        """Map lane_distance (+ lane index during sweep) to (x, y) when driving ±x."""
+        cfg = self.cfg
+        east = math.sin(math.radians(self.target_heading)) >= 0.0
+        if east:
+            self.x = cfg.START_X_CM + self.lane_distance
+        else:
+            self.x = cfg.START_X_CM + cfg.ARENA_WIDTH_CM - self.lane_distance
+        if self._is_transverse_sweep():
+            self.y = (self._sweep_origin_y
+                      + self._lane_index * self._sweep_sign * cfg.LANE_WIDTH_CM)
 
     def _enabled_front_distances(self, readings):
         cfg = self.cfg

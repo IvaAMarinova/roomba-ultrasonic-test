@@ -191,6 +191,19 @@ def _advance_one_lane(logger, motors, cfg):
     motors.stop(logger)
 
 
+def _lane_turn_left(logger, motors, cfg, imu, nav):
+    """Sideways sweep lane change: spin left 90, shift one lane, spin left 90."""
+    shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
+    logger.log("lane_turn", step="spin", direction="left", deg=cfg.TURN_ANGLE_DEG)
+    _spin_90(logger, motors, cfg, "left", imu)
+    logger.log("lane_turn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
+    _advance_one_lane(logger, motors, cfg)
+    logger.log("lane_turn", step="spin", direction="left", deg=cfg.TURN_ANGLE_DEG)
+    _spin_90(logger, motors, cfg, "left", imu)
+    nav.complete_turn()
+    logger.log("lane_turn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
+
+
 def _u_turn(logger, motors, cfg, direction, imu, nav):
     """End-of-lane U-turn: spin 90, shift one lane width, spin 90 -- one decision.
 
@@ -316,52 +329,6 @@ def _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_headin
     motors.stop(logger)
 
 
-def _reposition_to_left_wall(logger, motors, cfg, imu, nav, sensors, period):
-    """After centre climb: drive left to the left wall, then start the serpentine."""
-    print("[hill] centre -> left wall for sweep start")
-    standoff = cfg.FRONT_STOP_DISTANCE_CM
-    _drive_to_wall(logger, motors, cfg, imu, nav, sensors, period, target_heading=-90.0)
-    nav.set_pose(x=cfg.START_X_CM + standoff, y=nav.y, target_heading=0.0)
-    nav.reset_sweep_from_left()
-    nav.phase = Phase.SWEEP
-    print(f"[hill] at left wall (x={nav.x:.0f}) -> sweep")
-
-
-def _reposition_for_descend(logger, motors, cfg, imu, nav, sensors, period):
-    """At the right wall: drive to vertical centre, then across to hill centre."""
-    print("[hill] right wall -> centre for descend")
-    standoff = cfg.FRONT_STOP_DISTANCE_CM
-    center_y = getattr(cfg, "DESCEND_CENTER_Y_CM", cfg.ARENA_LENGTH_CM / 2.0)
-    center_x = getattr(cfg, "HILL_CLIMB_X_CM", cfg.ARENA_WIDTH_CM / 2.0)
-    nav.set_pose(x=cfg.ARENA_WIDTH_CM - standoff)
-
-    if nav.y < center_y - 5.0:
-        along = 0.0
-        dist = center_y - nav.y
-    else:
-        along = 180.0
-        dist = nav.y - center_y
-
-    if dist > 5.0:
-        _spin_to_heading(logger, motors, cfg, imu, nav, along)
-        nav.target_heading = along
-        print(f"[hill] drive {dist:.0f} cm along right wall to y={center_y:.0f}")
-        _drive_distance(logger, motors, cfg, dist, cfg.SLOW_SPEED)
-        nav.set_pose(y=center_y, target_heading=along)
-
-    dist_x = nav.x - center_x
-    if dist_x > 5.0:
-        _spin_to_heading(logger, motors, cfg, imu, nav, -90.0)
-        nav.target_heading = -90.0
-        print(f"[hill] drive {dist_x:.0f} cm left to hill centre (x={center_x:.0f})")
-        _drive_distance(logger, motors, cfg, dist_x, cfg.SLOW_SPEED)
-
-    nav.set_pose(x=center_x, y=center_y, target_heading=180.0)
-    nav.note_blocking_maneuver()
-    nav.phase = Phase.DESCEND
-    print(f"[hill] at centre (x={nav.x:.0f}, y={nav.y:.0f}) -> descend")
-
-
 def _approach_pit(logger, motors, cfg, imu, nav, disposer, sensors, period):
     """From the start wall: drive along it to pit x, face the pit, dump."""
     print("[pit] along start wall -> centre -> dump")
@@ -424,9 +391,15 @@ def _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors,
 def execute(logger, cmd, motors, cfg, imu, nav, disposer):
     if cmd.action is Action.FORWARD:
         motors.drive(logger, cmd.speed, cmd.steer)
+    elif cmd.action is Action.SPIN_LEFT:
+        _spin_90(logger, motors, cfg, "left", imu)
+        nav.complete_spin_left()
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
-        _u_turn(logger, motors, cfg, direction, imu, nav)
+        if nav._sweep_transverse and cmd.action is Action.TURN_LEFT:
+            _lane_turn_left(logger, motors, cfg, imu, nav)
+        else:
+            _u_turn(logger, motors, cfg, direction, imu, nav)
     elif cmd.action is Action.DISPOSE:
         _dispose(logger, motors, cfg, imu, nav, disposer)
     elif cmd.action is Action.STOP:
@@ -477,8 +450,8 @@ def _sync_shovel(front_servo, nav, last_phase):
         return last_phase
     if phase is Phase.CLIMB_FIRST:
         front_servo.climb()
-    elif phase in (Phase.REPOSITION_TO_LEFT, Phase.SWEEP,
-                   Phase.REPOSITION_FOR_DESCEND):
+    elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
+                   Phase.APPROACH_HILL_CENTER):
         front_servo.lower()
     elif phase is Phase.DESCEND:
         front_servo.climb()
@@ -507,7 +480,7 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
     drive_mode = "IMU heading-hold"
     print("=" * 78)
     hill = getattr(cfg, "HILL_MODE", False)
-    mode_label = ("hill: centre climb -> left wall -> sweep -> centre descend -> pit"
+    mode_label = ("hill: wall stop -> spin left -> sideways sweep -> dump"
                   if hill else "IMU + wall-referenced navigation with disposal")
     print(f"USE_SENSORS = True -> {mode_label}")
     print(f"  arena         : {cfg.ARENA_WIDTH_CM:.0f} x {cfg.ARENA_LENGTH_CM:.0f} cm, "
@@ -551,7 +524,14 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
             execute(logger, cmd, motors, cfg, imu, nav, disposer)
 
             if cmd.action is not Action.FORWARD:
-                last_t = time.monotonic()   # dispose / U-turn blocked -- drop stale dt
+                last_t = time.monotonic()   # dispose / turn blocked -- drop stale dt
+
+            if cmd.action is Action.DISPOSE and hill:
+                nav.set_pose(x=cfg.PIT_X_CM, y=cfg.FRONT_STOP_DISTANCE_CM,
+                             target_heading=0.0)
+                nav._done = True
+                print("[hill] dump complete -- run finished.")
+                break
 
             # Scoop only in the collection zone (hill mode) or on interval (legacy).
             if cmd.action is Action.FORWARD and front_servo is not None and nav.collecting:
@@ -562,20 +542,6 @@ def run_navigation(logger, motors, cfg, imu=None, front_servo=None, babysit=Fals
                     drive_elapsed = 0.0
                     last_t = time.monotonic()   # scoop blocks -- don't bridge that gap
 
-            if nav.phase is Phase.REPOSITION_TO_LEFT:
-                print("[nav] climb complete -> reposition to left wall")
-                _reposition_to_left_wall(logger, motors, cfg, imu, nav, sensors, period)
-                last_phase = _sync_shovel(front_servo, nav, last_phase)
-                continue
-            if nav.phase is Phase.REPOSITION_FOR_DESCEND:
-                print("[nav] sweep complete -> reposition to centre for descend")
-                _reposition_for_descend(logger, motors, cfg, imu, nav, sensors, period)
-                last_phase = _sync_shovel(front_servo, nav, last_phase)
-                continue
-            if nav.phase is Phase.TO_PIT:
-                print("[nav] start wall reached -> pit approach")
-                _approach_pit(logger, motors, cfg, imu, nav, disposer, sensors, period)
-                break
             if nav.mode is Mode.DONE and not hill:
                 print(f"[nav] coverage complete: swept all {cfg.NUM_LANES} lanes")
                 _return_to_pit_and_dispose(logger, motors, cfg, imu, nav, disposer, sensors, period)
