@@ -190,6 +190,18 @@ FRONT_SENSORS = ("front_left", "front_center", "front_right")
 BACK_SENSORS = ("back_left", "back_right")
 
 # ---------------------------------------------------------------------------
+# Hardware behavior switch.
+#   The front_center echo wire is not connected to a sensor, so the pin doubles
+#   as a mode switch, sampled ONCE at script start with the internal pull-down
+#   enabled:
+#     HIGH (wire connected / driven to 3.3 V) -> deposit only: run the dump
+#       maneuver at the current position and exit; no navigation.
+#     LOW (wire left disconnected)            -> run the regular script.
+# ---------------------------------------------------------------------------
+DEPOSIT_SWITCH_PIN = SENSORS["front_center"]["echo"]   # BCM 22
+DEPOSIT_SWITCH_SETTLE_S = 0.05   # let the pull-down settle before sampling
+
+# ---------------------------------------------------------------------------
 # Decision thresholds (centimetres).
 #   End-of-lane is decided PRIMARILY by the front wall: we turn when the car is a
 #   fixed standoff (FRONT_STOP_DISTANCE_CM) from the end wall. This is a real

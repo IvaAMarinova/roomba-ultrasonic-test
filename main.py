@@ -552,6 +552,53 @@ def _log_status(logger, nav, readings, yaw, cmd):
                **readings)
 
 
+def _deposit_switch_on(logger, cfg):
+    """Sample the hardware behavior switch (the unused front_center echo pin).
+
+    Read once with the internal pull-down enabled, so the pin is a clean LOW
+    when the wire is left disconnected and HIGH only when it is driven to
+    3.3 V. Off-Pi (no RPi.GPIO) the switch reads as off.
+    """
+    try:
+        import RPi.GPIO as GPIO
+    except (ImportError, RuntimeError):
+        return False
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(cfg.DEPOSIT_SWITCH_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    time.sleep(cfg.DEPOSIT_SWITCH_SETTLE_S)
+    high = GPIO.input(cfg.DEPOSIT_SWITCH_PIN) == GPIO.HIGH
+    GPIO.cleanup(cfg.DEPOSIT_SWITCH_PIN)
+    logger.log("deposit_switch", pin=cfg.DEPOSIT_SWITCH_PIN, high=high)
+    return high
+
+
+def run_deposit(logger, motors, cfg):
+    """Deposit-only mode (hardware switch HIGH): dump where placed, no navigation.
+
+    The core of _dispose() without IMU/nav/turning: the rear door starts
+    opening while the car reverses over the pit, dwells with the door open,
+    then pulls the same distance forward to clear.
+    """
+    print("deposit switch HIGH -> deposit at current position, then exit")
+    disposer = Disposer(cfg)
+    try:
+        door_thread = disposer.start_opening()
+        time.sleep(0.1) # Need to back up first
+        rev_s = _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM,
+                                -cfg.DISPOSE_REVERSE_SPEED)
+        disposer.join_opening(door_thread)
+        logger.log("deposit", step="reverse", cm=cfg.DISPOSE_REVERSE_CM, seconds=rev_s)
+
+        logger.log("deposit", step="dump", hold_s=cfg.DISPOSE_HOLD_S)
+        disposer.dump()
+
+        _drive_distance(logger, motors, cfg, cfg.DISPOSE_REVERSE_CM, cfg.DISPOSE_REVERSE_SPEED)
+        logger.log("deposit", step="clear", cm=cfg.DISPOSE_REVERSE_CM)
+        logger.log("deposit", step="done")
+    finally:
+        disposer.cleanup()
+
+
 def run_drive_test(logger, motors, cfg, imu=None):
     """Blind, open-loop maneuver script -- no ultrasonic sensors.
 
@@ -732,6 +779,10 @@ def main():
     cfg = config
     logger = Logger(format=args.log_format)
 
+    # Hardware behavior switch: sample the unused front_center echo pin before
+    # anything else touches the GPIOs (the sensor array reconfigures this pin).
+    deposit_mode = _deposit_switch_on(logger, cfg)
+
     motors = MotorDriver(cfg)
     front_servo = FrontServo(cfg)
     # IMU is optional: if absent/disabled, IMU.available stays False, yaw()
@@ -742,13 +793,17 @@ def main():
         from imu import IMU
         imu = IMU(logger, cfg)
     try:
-        front_servo.startup() if not cfg.HILL_MODE else front_servo.climb()
-        if args.shell:
-            breakpoint()
-        elif cfg.USE_SENSORS:
-            run_navigation(logger, motors, cfg, imu, front_servo, babysit=args.babysit)
+        if deposit_mode and not args.shell:
+            front_servo.raise_up()
+            run_deposit(logger, motors, cfg)
         else:
-            run_drive_test(logger, motors, cfg, imu)
+            front_servo.startup() if not cfg.HILL_MODE else front_servo.climb()
+            if args.shell:
+                breakpoint()
+            elif cfg.USE_SENSORS:
+                run_navigation(logger, motors, cfg, imu, front_servo, babysit=args.babysit)
+            else:
+                run_drive_test(logger, motors, cfg, imu)
     except KeyboardInterrupt:
         pass
     finally:
