@@ -153,7 +153,7 @@ class NavigationController:
     def collecting(self):
         """True when the front scoop should run lift cycles."""
         if getattr(self.cfg, "HILL_BENCHMARK_MODE", False):
-            return self.phase in (Phase.BENCHMARK_OUT, Phase.BENCHMARK_RETURN)
+            return self.phase is Phase.BENCHMARK_OUT
         if not getattr(self.cfg, "HILL_MODE", False):
             return True
         return self.phase is Phase.SWEEP
@@ -164,12 +164,12 @@ class NavigationController:
 
     @property
     def wants_climb_shovel(self):
+        """Raised scoop: slopes, return legs, and lateral lane shifts."""
         if not getattr(self.cfg, "HILL_MODE", False):
             return False
         if self.phase in (Phase.CLIMB_FIRST, Phase.DESCEND):
             return True
-        if (self._benchmark_mode() and self.phase is Phase.BENCHMARK_RETURN
-                and self.y <= getattr(self.cfg, "HILL_TOP_Y_CM", 0) + 5.0):
+        if self._benchmark_mode() and self.phase is Phase.BENCHMARK_RETURN:
             return True
         return False
 

@@ -191,27 +191,34 @@ def _spin_to_heading(logger, motors, cfg, imu, nav, target_rel):
     return aligned
 
 
-def _advance_one_lane(logger, motors, cfg):
+def _advance_one_lane(logger, motors, cfg, front_servo=None, nav=None):
     """Drive straight by LANE_WIDTH_CM (the sideways shift into the next lane)."""
+    if front_servo is not None:
+        front_servo.climb()
     motors.drive(logger, cfg.SLOW_SPEED, 0.0)
     time.sleep(cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S)
     motors.stop(logger)
+    if front_servo is not None and nav is not None:
+        if nav.wants_climb_shovel:
+            front_servo.climb()
+        elif nav.collecting:
+            front_servo.lower()
 
 
-def _lane_turn_left(logger, motors, cfg, imu, nav):
+def _lane_turn_left(logger, motors, cfg, imu, nav, front_servo=None):
     """Sideways sweep lane change: spin left 90, shift one lane, spin left 90."""
     shift_s = cfg.LANE_WIDTH_CM / cfg.DRIVE_CM_PER_S
     logger.log("lane_turn", step="spin", direction="left", deg=cfg.TURN_ANGLE_DEG)
     _spin_90(logger, motors, cfg, "left", imu)
     logger.log("lane_turn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
-    _advance_one_lane(logger, motors, cfg)
+    _advance_one_lane(logger, motors, cfg, front_servo, nav)
     logger.log("lane_turn", step="spin", direction="left", deg=cfg.TURN_ANGLE_DEG)
     _spin_90(logger, motors, cfg, "left", imu)
     nav.complete_turn()
     logger.log("lane_turn", step="done", x=nav.x, y=nav.y, heading=nav.heading_rel)
 
 
-def _u_turn(logger, motors, cfg, direction, imu, nav):
+def _u_turn(logger, motors, cfg, direction, imu, nav, front_servo=None):
     """End-of-lane U-turn: spin 90, shift one lane width, spin 90 -- one decision.
 
     No sensors are read while it runs; the steps are logged so the second spin
@@ -222,7 +229,7 @@ def _u_turn(logger, motors, cfg, direction, imu, nav):
     logger.log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
     _spin_90(logger, motors, cfg, direction, imu)
     logger.log("uturn", step="lane_shift", cm=cfg.LANE_WIDTH_CM, seconds=shift_s)
-    _advance_one_lane(logger, motors, cfg)
+    _advance_one_lane(logger, motors, cfg, front_servo, nav)
     logger.log("uturn", step="spin", direction=direction, deg=cfg.TURN_ANGLE_DEG)
     _spin_90(logger, motors, cfg, direction, imu)
     nav.complete_turn()
@@ -418,7 +425,7 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         _wall_stop_lift(logger, motors, front_servo, cmd)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
-        _u_turn(logger, motors, cfg, direction, imu, nav)
+        _u_turn(logger, motors, cfg, direction, imu, nav, front_servo)
     elif cmd.action is Action.DISPOSE:
         _wall_stop_lift(logger, motors, front_servo, cmd)
         _dispose(logger, motors, cfg, imu, nav, disposer)
@@ -471,12 +478,11 @@ def _sync_shovel(front_servo, nav, last_phase):
         return last_phase
     if phase is Phase.CLIMB_FIRST:
         front_servo.climb()
-    elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
-                   Phase.APPROACH_HILL_CENTER, Phase.BENCHMARK_OUT,
-                   Phase.BENCHMARK_RETURN):
-        front_servo.lower()
-    elif phase is Phase.DESCEND:
+    elif phase in (Phase.DESCEND, Phase.BENCHMARK_RETURN):
         front_servo.climb()
+    elif phase in (Phase.APPROACH_FAR_WALL, Phase.APPROACH_LEFT_WALL, Phase.SWEEP,
+                   Phase.APPROACH_HILL_CENTER, Phase.BENCHMARK_OUT):
+        front_servo.lower()
     return phase
 
 

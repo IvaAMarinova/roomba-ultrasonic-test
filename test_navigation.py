@@ -723,9 +723,11 @@ def test_benchmark_collecting_on_flat():
     n.phase = Phase.BENCHMARK_OUT
     assert n.collecting
     n.phase = Phase.BENCHMARK_RETURN
-    assert n.collecting
+    assert not n.collecting
+    assert n.wants_climb_shovel
     n.phase = Phase.CLIMB_FIRST
     assert not n.collecting
+    assert n.wants_climb_shovel
 
 
 def test_benchmark_return_dumps_with_one_block():
