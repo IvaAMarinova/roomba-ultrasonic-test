@@ -114,7 +114,7 @@ WALL_ALIGN_MAX_CREEP_CM = 80.0      # safety cap on total lateral search
 #   "approach"      -- car on the flat facing DOWN (toward the start wall):
 #                      drive to the wall, turn 90 deg, THEN run the alignment
 #                      (the full find-the-pit endgame).
-WALL_ALIGN_TEST_MODE = "perpendicular"
+WALL_ALIGN_TEST_MODE = "approach"
 # Legacy aliases (pit-specific names kept for rover config compatibility)
 PIT_ALIGN_HEADING = WALL_ALIGN_HEADING
 PIT_CENTER_SENSOR_TOL_CM = WALL_CENTER_SENSOR_TOL_CM
