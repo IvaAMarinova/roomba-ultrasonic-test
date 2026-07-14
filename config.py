@@ -278,16 +278,13 @@ MAX_HEADING_TRIM = 0.0            # clamp on the heading-hold steering trim
 HEADING_HOLD_DEADBAND_DEG = 4.0   # ignore smaller errors (stops IMU weave)
 
 # Benchmark return: NO 180 turn. From the far wall the car REVERSES straight
-# back to the start, nose still facing the far wall, while the IMU holds heading
-# 0 (skid-steer yaw response to `steer` is the same sign in reverse, so the same
-# trim law applies). The two BACK sensors end the leg at the start wall; the
-# dead-reckoned y is the backstop if they never agree.
+# back to the start, nose still facing the far wall, OPEN LOOP (no IMU
+# heading-hold while reversing -- it steered all over the place). The two BACK
+# sensors end the leg at the start wall; the dead-reckoned y is the backstop if
+# they never agree.
 BENCHMARK_REVERSE_SPEED = SLOW_SPEED  # reverse duty on the way home
-REVERSE_HEADING_HOLD_GAIN = 0.02      # steer trim per degree of heading error (reversing)
-REVERSE_MAX_HEADING_TRIM = 0.2        # clamp on the reversing heading-hold trim
-REVERSE_HEADING_DEADBAND_DEG = 2.0    # ignore smaller errors while reversing
-# Fixed mechanical trim while reversing (cf. FORWARD_STEER_TRIM below); the IMU
-# heading-hold corrects the rest. Tune on a long straight reverse if it drifts.
+# Fixed mechanical trim while reversing (cf. FORWARD_STEER_TRIM below).
+# Tune on a long straight reverse if it drifts.
 REVERSE_STEER_TRIM = 0.0
 BACK_STOP_DISTANCE_CM = 25.0          # rear gap to the start wall that ends the reverse leg
 BACK_AGREE_TOL_CM = FRONT_AGREE_TOL_CM  # back pair must agree within this to be the wall
@@ -297,7 +294,7 @@ REAR_WALL_PERSIST_TICKS = 2           # consecutive ticks before trusting the re
 # Fixed mechanical trim on forward drives (no IMU). Compensates for uneven
 # wheels/motors after wear. Positive = nudge right (corrects left drift).
 # Tune on a long straight run; keep well below MAX_HEADING_TRIM.
-FORWARD_STEER_TRIM = 0.0140
+FORWARD_STEER_TRIM = 0.0
 
 # ---------------------------------------------------------------------------
 # Odometry end-of-lane BACKSTOP.
@@ -381,7 +378,7 @@ CONTROL_LOOP_HZ = 20.0           # how often we read sensors and decide
 #       H-bridges and turning on the real car (no sensors / dividers needed yet).
 #   USE_SENSORS = True  -> normal sensor-driven navigation.
 # ---------------------------------------------------------------------------
-USE_SENSORS = True
+USE_SENSORS = False
 
 # Open-loop maneuver script used when USE_SENSORS is False.
 # Each step is (action, seconds), where action is one of:

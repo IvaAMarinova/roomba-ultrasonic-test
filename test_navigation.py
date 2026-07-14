@@ -735,20 +735,13 @@ def test_benchmark_return_reverses():
     assert cmd.steer == 0.0
 
 
-def test_benchmark_return_imu_trims_heading():
+def test_benchmark_return_reverses_straight_despite_yaw_error():
+    # Reverse return is open loop: no IMU steer trim even with a heading error.
     n = _return_nav()
     cmd = n.decide(reading(), yaw=10.0, dt=0.1)
     assert cmd.action is Action.REVERSE
-    assert cmd.steer > 0.0             # same trim sense as forward heading-hold
-    assert abs(cmd.steer) <= config.REVERSE_MAX_HEADING_TRIM
+    assert cmd.steer == 0.0
     cmd = n.decide(reading(), yaw=-10.0, dt=0.1)
-    assert cmd.steer < 0.0
-
-
-def test_benchmark_return_deadband_reverses_straight():
-    n = _return_nav()
-    cmd = n.decide(reading(), yaw=1.0, dt=0.1)
-    assert cmd.action is Action.REVERSE
     assert cmd.steer == 0.0
 
 

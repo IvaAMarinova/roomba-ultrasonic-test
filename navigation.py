@@ -375,33 +375,13 @@ class NavigationController:
         return self._cmd_cruise(readings, reason="benchmark: to far wall",
                                 hold_heading=False)
 
-    def _reverse_steer_trim(self):
-        """IMU heading-hold while reversing.
-
-        Skid-steer yaw response to `steer` has the same sign in reverse as
-        forward (negating both wheel speeds leaves the wheel-speed difference's
-        sign unchanged), so the cruise trim formula carries over as-is.
-        """
-        cfg = self.cfg
-        if not self._has_heading:
-            return 0.0
-        err = angle_diff(self.target_heading, self.heading_rel)
-        deadband = getattr(cfg, "REVERSE_HEADING_DEADBAND_DEG", 2.0)
-        if abs(err) <= deadband:
-            return 0.0
-        gain = getattr(cfg, "REVERSE_HEADING_HOLD_GAIN", 0.02)
-        max_trim = getattr(cfg, "REVERSE_MAX_HEADING_TRIM", 0.2)
-        trim = -gain * err
-        return max(-max_trim, min(max_trim, trim))
-
     def _cmd_reverse_cruise(self, reason=""):
-        """Back straight up at reverse speed, IMU trimming toward target_heading."""
+        """Back straight up at reverse speed, open loop (no heading trim)."""
         cfg = self.cfg
         self.mode = Mode.DRIVING
         speed = getattr(cfg, "BENCHMARK_REVERSE_SPEED", cfg.SLOW_SPEED)
         return self._remember(Command(
-            Action.REVERSE, speed=speed, steer=self._reverse_steer_trim(),
-            reason=reason))
+            Action.REVERSE, speed=speed, reason=reason))
 
     def _rear_wall(self, readings):
         """Distance to the wall behind + agreeing count, from the back sensors."""
