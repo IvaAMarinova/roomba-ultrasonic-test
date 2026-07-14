@@ -1,0 +1,46 @@
+# Roomba navigation bot — auto-start main.py with journal logging via run.sh.
+#
+# Install (on the Pi):
+#   1. Edit ROOMBA_DIR below to your clone path.
+#   2. sudo cp systemd/roomba-bot.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable roomba-bot.service
+# NOTE: enable WITHOUT --now on purpose — the bot must not start driving the
+# moment the service is installed; it comes up from the NEXT boot onwards.
+#
+# Logs (tagged roomba-bot, JSON events from main.py):
+#   journalctl -u roomba-bot -f
+#   journalctl -t roomba-bot -f
+#
+# Kibana Discover filter: log.syslog.appname:"roomba-bot"
+
+[Unit]
+Description=Roomba ultrasonic navigation bot (main.py)
+After=network.target pigpiod.service
+Requires=pigpiod.service
+Wants=network.target
+
+[Service]
+Type=simple
+
+# Project root on the Pi — only value you need to change.
+Environment=ROOMBA_DIR=/home/roomba/firmware/roomba-ultrasonic-test
+Environment=GPIOZERO_PIN_FACTORY=pigpio
+
+User=roomba
+Group=roomba
+
+# run.sh -> systemd-cat (tag roomba-bot); adds --log-format=json by default.
+ExecStart=/bin/bash -ec 'cd "${ROOMBA_DIR:?}" && export PATH="${ROOMBA_DIR}/.venv/bin:${PATH}" && exec ./run.sh main.py'
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=roomba-bot
+
+[Install]
+WantedBy=multi-user.target
