@@ -280,11 +280,14 @@ class NavigationController:
                     self._wall_persist = 0
                     print("[hill] swept to mid-length -> drive to hill centre")
                     return self._hill_spin_left_cmd("sweep half done -> spin left")
+                turn = self._next_serpentine_turn
                 self._advance_serpentine()
                 self.mode = Mode.TURNING
+                action = (Action.TURN_LEFT if turn is Turn.LEFT
+                          else Action.TURN_RIGHT)
                 return self._remember(Command(
-                    Action.TURN_LEFT, speed=cfg.TURN_SPEED,
-                    reason=f"end of lane ({trigger}), lane turn left",
+                    action, speed=cfg.TURN_SPEED,
+                    reason=f"end of lane ({trigger}), turn {turn.name.lower()}",
                     wall_stop=wall_trigger))
             return self._cmd_cruise(readings, reason="sweeping sideways")
 
@@ -573,7 +576,7 @@ class NavigationController:
         cfg = self.cfg
         self._sweep_transverse = True
         self._lane_index = 0
-        self._next_serpentine_turn = Turn.LEFT
+        self._next_serpentine_turn = Turn.RIGHT
         self._sweep_sign = 1.0
         self._last_turn = None
         self._pit_handled = False

@@ -628,13 +628,31 @@ def test_hill_transverse_lane_length():
     n.phase = Phase.SWEEP
     n.reset_sweep_transverse(origin_y=cfg.HILL_TOP_Y_CM)
     n.lane_distance = cfg.ARENA_WIDTH_CM - 50.0
-    n.target_heading = 90.0
+    n.target_heading = -90.0
     cmd = None
     for _ in range(config.WALL_PERSIST_TICKS):
         cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
-                       yaw=90.0, dt=0.1)
-    assert cmd.action is Action.TURN_LEFT
+                       yaw=-90.0, dt=0.1)
+    assert cmd.action is Action.TURN_RIGHT
     assert n._sweep_transverse
+
+
+def test_hill_sweep_turns_alternate():
+    cfg = hill_cfg(HILL_SWEEP_HALF_Y_CM=200.0)
+    n = nav(cfg)
+    n.phase = Phase.SWEEP
+    n.reset_sweep_transverse(origin_y=cfg.HILL_TOP_Y_CM)
+    n.target_heading = -90.0
+    n.lane_distance = cfg.ARENA_WIDTH_CM - 50.0
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=-90.0, dt=0.0)
+    assert cmd.action is Action.TURN_RIGHT
+    n.complete_turn()
+    assert n.target_heading == 90.0
+    n.lane_distance = cfg.ARENA_WIDTH_CM - 50.0
+    cmd = n.decide(front_wall(config.FRONT_STOP_DISTANCE_CM - 5),
+                   yaw=90.0, dt=0.0)
+    assert cmd.action is Action.TURN_LEFT
 
 
 def test_hill_right_edge_at_half_approaches_center():

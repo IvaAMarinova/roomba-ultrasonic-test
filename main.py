@@ -414,10 +414,7 @@ def execute(logger, cmd, motors, cfg, imu, nav, disposer, front_servo=None):
     elif cmd.action in (Action.TURN_LEFT, Action.TURN_RIGHT):
         _wall_stop_lift(logger, motors, front_servo, cmd)
         direction = "left" if cmd.action is Action.TURN_LEFT else "right"
-        if nav._sweep_transverse and cmd.action is Action.TURN_LEFT:
-            _lane_turn_left(logger, motors, cfg, imu, nav)
-        else:
-            _u_turn(logger, motors, cfg, direction, imu, nav)
+        _u_turn(logger, motors, cfg, direction, imu, nav)
     elif cmd.action is Action.DISPOSE:
         _wall_stop_lift(logger, motors, front_servo, cmd)
         _dispose(logger, motors, cfg, imu, nav, disposer)
